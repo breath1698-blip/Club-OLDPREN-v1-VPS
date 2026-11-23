@@ -106,62 +106,77 @@ const queuedIds = session => new Set(session.matches.filter(match => match.statu
 const playerReady = (club, session, playerId) => session.attendance[playerId]?.status === 'ready' && club.players.some(player => player.id === playerId && !player.archived);
 
 export function suggest(club, session, locked) {
+  return suggestOptions(club, session, locked)[0];
+}
+
+export function suggestOptions(club, session, locked) {
   requireRule(Array.isArray(locked) && locked.length === 4, 'Pilih empat slot pemain.');
   const busy = activeIds(session);
   const queued = queuedIds(session);
   const pins = locked.filter(Boolean);
-  const available = club.players.filter(player => playerReady(club, session, player.id) && !busy.has(player.id) && !queued.has(player.id));
+  const available = club.players.filter(player => !player.archived && session.attendance[player.id]?.status === 'ready' && !busy.has(player.id) && !queued.has(player.id));
   requireRule(new Set(pins).size === pins.length && pins.every(playerId => available.some(player => player.id === playerId)), 'Pemain yang dipilih sedang tidak tersedia.');
   requireRule(available.length >= 4, 'Butuh empat pemain siap main yang belum terjadwal.');
   const strength = standings(club);
-  const recent = session.matches.filter(match => ['finished', 'unscored'].includes(match.status)).slice(-8);
-  const priority = player => Date.parse(session.attendance[player.id].since);
-  const minPriority = Math.min(...available.map(priority));
-  // Kelompok tunggu dua menit memberi ruang untuk menyeimbangkan tim yang masuk antrean hampir bersamaan.
-  const waitingGroup = player => Math.floor((priority(player) - minPriority) / 120000);
-  const unordered = available.filter(player => !pins.includes(player.id))
-    .sort((left, right) => waitingGroup(left) - waitingGroup(right) || priority(left) - priority(right) || byName(left, right));
-  const needed = 4 - pins.length;
-  const seats = locked.map((playerId, index) => playerId ? -1 : index).filter(index => index >= 0);
-  const playersToUse = unordered.slice(0, needed);
-  const lastGroup = playersToUse.length ? waitingGroup(playersToUse.at(-1)) : 0;
-  const fixed = playersToUse.filter(player => waitingGroup(player) < lastGroup);
-  const flexible = unordered.filter(player => waitingGroup(player) === lastGroup);
-  let best = null;
-
-  function evaluate(candidate) {
-    const teams = [candidate.slice(0, 2), candidate.slice(2)];
-    const gap = Math.abs(teamAverage(teams[0], strength) - teamAverage(teams[1], strength));
-    let repeats = 0;
-    for (const match of recent) {
-      for (const [own, opposing] of [[teams[0], teams[1]], [teams[1], teams[0]]]) {
-        const prior = match.teams.find(team => team.includes(own[0]));
-        if (prior?.includes(own[1])) repeats += 2;
-        if (prior) {
-          const other = match.teams.find(team => team !== prior);
-          repeats += opposing.filter(playerId => other.includes(playerId)).length;
-        }
-      }
-    }
-    const merit = gap + Math.min(repeats, 8);
-    if (!best || merit < best.merit) best = { teams, merit };
-  }
-
-  // shortcut: cek 16 kandidat dari kelompok tunggu terakhir, perlu diperluas kalau host butuh semua kombinasi.
-  const pool = [...fixed, ...flexible.slice(0, 16)].map(player => player.id);
-  const mustUse = new Set(fixed.map(player => player.id));
-  function fill(seat, candidate, remaining) {
-    if (seat === seats.length) {
-      if (![...mustUse].some(playerId => remaining.includes(playerId))) evaluate(candidate);
-      return;
-    }
-    for (const playerId of remaining) {
-      candidate[seats[seat]] = playerId;
-      fill(seat + 1, candidate, remaining.filter(other => other !== playerId));
+  const played = session.matches.filter(m => ['finished','unscored'].includes(m.status)).sort((a,b) => a.finishOrder - b.finishOrder);
+  const games = new Map(), partners = new Map(), opponents = new Map();
+  const add = (map, key, weight) => map.set(key, (map.get(key) || 0) + weight);
+  const pair = (a,b) => a < b ? a + ':' + b : b + ':' + a;
+  for (const m of played) for (const id of m.teams.flat()) add(games, id, 1);
+  played.slice(-8).forEach(({teams:[a,b]}, i) => {
+    for (const t of [a,b]) add(partners, pair(...t), i+1);
+    for (const x of a) for (const y of b) add(opponents, pair(x,y), i+1);
+  });
+  const since = id => Date.parse(session.attendance[id].since);
+  const first = Math.min(...available.map(p => since(p.id)));
+  const group = id => Math.floor((since(id)-first)/120000);
+  const priority = (a,b) => group(a)-group(b) || (games.get(a)||0)-(games.get(b)||0);
+  const pool = available.map(p=>p.id).filter(id=>!pins.includes(id)).sort((a,b)=>priority(a,b) || a.localeCompare(b));
+  const needed = 4-pins.length;
+  if (!needed) return [[locked.slice(0,2),locked.slice(2)]];
+  const cutoff = pool[needed-1];
+  const fixed = [...pins,...pool.filter(id=>priority(id,cutoff)<0)];
+  let tied = pool.filter(id=>priority(id,cutoff)===0);
+  // Stratified sample across the whole tied queue; rotate the offset as matches finish.
+  const limit = 16;
+  if (tied.length > limit) tied = Array.from({length:limit}, (_,i)=>tied[(Math.floor(i*tied.length/limit)+played.length)%tied.length]);
+  const candidates = [];
+  function evaluate(ids) {
+    for (let mate=1; mate<4; mate++) {
+      const a=[ids[0],ids[mate]], b=ids.filter((_,i)=>i!==0 && i!==mate);
+      const oriented = [[a,b],[b,a]].find(sides=>locked.every((id,i)=>!id || sides[i>>1].includes(id)));
+      if (!oriented) continue;
+      const teams=oriented.map((team,i)=>{
+        const slots=locked.slice(2*i,2*i+2), free=team.filter(id=>!slots.includes(id));
+        return slots.map(id=>id || free.shift());
+      });
+      const gap=Math.abs(teamAverage(a,strength)-teamAverage(b,strength));
+      const partnersCost=(partners.get(pair(...a))||0)+(partners.get(pair(...b))||0);
+      let opponentsCost=0;
+      for(const x of a) for(const y of b) opponentsCost+=opponents.get(pair(x,y))||0;
+      candidates.push({teams,gap,partnersCost,opponentsCost});
     }
   }
-  fill(0, locked.slice(), pool);
-  return best.teams;
+  function choose(start,ids) {
+    if(ids.length===4) return evaluate(ids);
+    for(let i=start;i<=tied.length-(4-ids.length);i++) choose(i+1,[...ids,tied[i]]);
+  }
+  choose(0,fixed);
+  // B and C start 25 rating points apart. Allow up to half that gap for variety.
+  const tolerance=(startingRatings.get('B')-startingRatings.get('C'))/2;
+  const bestGap=Math.min(...candidates.map(c=>c.gap));
+  const competitive = candidates.filter(c => c.gap <= bestGap + tolerance);
+  const shown = new Map(), options = [];
+  while (competitive.length && options.length < 5) {
+    // Break comparable options in favor of players not already previewed.
+    const exposure = c => c.teams.flat().reduce((n,id) => n + (shown.get(id) || 0), 0);
+    for (const c of competitive) c.exposure = exposure(c);
+    competitive.sort((a,b) => a.partnersCost - b.partnersCost || a.opponentsCost - b.opponentsCost || a.gap - b.gap || a.exposure - b.exposure);
+    const {teams} = competitive.shift();
+    options.push(teams);
+    for (const id of teams.flat()) add(shown,id,1);
+  }
+  return options;
 }
 
 function validateName(input, required) {

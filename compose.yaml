@@ -1,0 +1,24 @@
+name: club-oldpren
+services:
+  club-oldpren:
+    build: .
+    user: "${APP_UID:?Missing APP_UID}:${APP_GID:?Missing APP_GID}"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    networks: [traefik]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/healthz').then(async r=>process.exit(r.ok && (await r.text())==='ok' ? 0 : 1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_interval: 2s
+      start_period: 15s
+      retries: 3
+networks:
+  traefik:
+    external: true

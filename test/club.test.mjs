@@ -357,6 +357,8 @@ test('host mengunci pemain, bisa antrekan laga lain, dan pemain tidak aktif di d
   const s = await sessionWithPlayers(f, 8);
   const suggestion = await f.request('/api/host/suggest', { sessionId: s.sessionId, locked: [s.players[0], null, null, null] }, s.cookie);
   assert.equal(suggestion.status, 200);
+  assert.deepEqual(suggestion.value.teams, suggestion.value.alternatives[0]);
+  assert.ok(suggestion.value.alternatives.every(teams => teams[0][0] === s.players[0]));
   assert.equal(suggestion.value.teams[0][0], s.players[0]);
   assert.equal(new Set(suggestion.value.teams.flat()).size, 4);
   const first = await s.create();

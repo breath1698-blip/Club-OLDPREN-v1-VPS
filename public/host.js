@@ -1,4 +1,4 @@
-import { api, root, layout, nav, hero, esc, page, dateText, dateShort, tiers, tierBadge, tierCaption, empty, teams, matchStatus, badge, scoreText, bindForm, feedback, popup, run, clipboard, field, button } from './ui.js?v=6';
+import { api, root, layout, nav, memberNav, hero, esc, page, dateText, dateShort, tiers, tierBadge, tierCaption, empty, teams, matchStatus, badge, scoreText, bindForm, feedback, popup, run, clipboard, field, button } from './ui.js?v=8';
 
 const endpoint = '/api/host';
 const tabs = [['sesi', 'Sesi Selasa'], ['skor', 'Skor'], ['roster', 'Roster'], ['akun', 'Akun']];
@@ -151,6 +151,10 @@ export async function host() {
       }
     } catch (error) {
       if (error.status === 401) { data = undefined; dialog?.close(); render(); }
+      if (error.status === 409 && payload.action === 'createMatch') {
+        data = await api(endpoint); dialog?.close(); render();
+        throw new Error(error.message + ' Buka Susun laga lagi untuk saran terbaru.');
+      }
       if (error.status === 409 && payload.revision !== undefined) { data = await api(endpoint); dialog?.close(); render(); }
       throw error;
     } finally { busy = false; }
@@ -181,10 +185,10 @@ export async function host() {
       feedback('Butuh empat pemain siap yang belum terjadwal.', true);
       return;
     }
-    const options = choices.map(player => '<option value="' + esc(player.id) + '">' + esc(player.display) + ' · ' + player.tier + '</option>').join('');
+    const playerOptions = choices.map(player => '<option value="' + esc(player.id) + '">' + esc(player.display) + ' · ' + player.tier + '</option>').join('');
     const select = index => '<select aria-label="Pemain ' + (index % 2 + 1) + ' Tim ' + (index < 2 ? 'A' : 'B') + '" name="p' + index +
-      '" required><option value="">Pilih pemain ' + (index % 2 + 1) + '</option>' + options + '</select>';
-    const dialog = popup('Susun laga · Lapangan ' + court, '<form id="compose" class="stack"><p class="muted">Pilih pemain atau minta saran untuk mengisi slot kosong.</p>' +
+      '" required><option value="">Pilih pemain ' + (index % 2 + 1) + '</option>' + playerOptions + '</select>';
+    const dialog = popup('Susun laga · Lapangan ' + court, '<form id="compose" class="stack"><p class="muted">Pilihan manual tetap di slotnya. Pilih baris kosong untuk melepasnya. Klik lagi untuk melihat alternatif sebelum menyimpan.</p>' +
       '<div class="compose-teams"><fieldset><legend>Tim A</legend>' + select(0) + select(1) + '</fieldset><fieldset><legend>Tim B</legend>' + select(2) + select(3) +
       '</fieldset></div><div class="compose-actions">' + button('Cari susunan seimbang', 'type="button" id="suggest"') +
       '<button class="button solid">Simpan laga</button></div></form>');
@@ -196,12 +200,27 @@ export async function host() {
         }
       }
     }
-    for (const control of selectors) control.addEventListener('change', refreshOptions);
-    dialog.querySelector('#suggest').addEventListener('click', event => run(event.currentTarget, async () => {
-      const suggestion = await api(endpoint + '/suggest', { sessionId: session.id, locked: selectors.map(control => control.value || null) });
-      suggestion.teams.flat().forEach((playerId, index) => { selectors[index].value = playerId; });
+    const pins = selectors.map(() => null);
+    const indicator = document.createElement('small');
+    indicator.setAttribute('role', 'status');
+    dialog.querySelector('.compose-actions').before(indicator);
+    let options = [], next = 0, generation = 0;
+    selectors.forEach((control, index) => control.addEventListener('change', () => {
+      pins[index] = control.value || null;
+      options = []; next = 0; generation++; indicator.textContent = '';
       refreshOptions();
-      feedback('Cek susunan, lalu simpan laga.');
+    }));
+    dialog.querySelector('#suggest').addEventListener('click', event => run(event.currentTarget, async () => {
+      if (!options.length) {
+        const requested = generation;
+        const suggestion = await api(endpoint + '/suggest', { sessionId: session.id, locked: pins });
+        if (requested !== generation || !dialog.open) return;
+        options = suggestion.alternatives;
+      }
+      options[next].flat().forEach((playerId, index) => { selectors[index].value = playerId; });
+      indicator.textContent = options.length === 1 ? 'Hanya satu susunan sesuai giliran, keseimbangan, dan pilihan manual.' : `Pilihan ${next + 1} dari ${options.length}`;
+      next = (next + 1) % options.length;
+      refreshOptions();
     }));
     bindForm('compose', form => update({
       action: 'createMatch', sessionId: session.id, court,
@@ -245,7 +264,7 @@ export async function host() {
       layout('<div class="narrow">' + hero('Masuk', 'Host', '') +
         '<form id="login" class="panel stack">' + field('username', 'Username', 'required maxlength="40" autocomplete="username"') +
         field('password', 'Password', 'required maxlength="256" type="password" autocomplete="current-password"') +
-        '<button class="button solid">Masuk</button></form></div>', '', '/host');
+        '<button class="button solid">Masuk</button></form></div>', memberNav('host', true), '/');
       bindForm('login', async form => {
         await api(endpoint + '/login', { username: form.get('username'), password: form.get('password') });
         data = await api(endpoint);
