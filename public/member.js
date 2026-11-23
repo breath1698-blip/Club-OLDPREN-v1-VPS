@@ -1,6 +1,7 @@
-import { api, root, layout, memberNav, hero, esc, page, dateText, dateShort, tiers, tierBadge, tierCaption, empty, teams, matchStatus, badge, scoreText, bindForm, feedback, popup } from './ui.js?v=8';
+import { api, root, layout, memberNav, hero, esc, page, dateText, dateShort, tiers, tierBadge, tierCaption, empty, teams, matchStatus, badge, scoreText, bindForm, feedback, popup } from './ui.js?v=13';
 
 const percent = new Intl.NumberFormat('id-ID', { style: 'percent', maximumFractionDigits: 1 });
+const monthLabel = new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' });
 const winRate = player => player.games ? percent.format(player.wins / player.games) : '<span aria-label="Belum ada hasil resmi">–</span>';
 
 export async function member(path) {
@@ -93,11 +94,11 @@ export async function member(path) {
   }
 
   function render() {
-    const tab = ['sesi', 'riwayat'].includes(page()) ? page() : 'tierlist';
+    const tab = ['sesi', 'riwayat', 'mvp'].includes(page()) ? page() : 'tierlist';
     const current = data.sessions.find(item => !item.closed);
     const body = tab === 'sesi' ? hero('Sesi', 'Selasa', 'Pendaftaran untuk ' + dateText(data.signup.date) + ' (WIB)') + '<div class="stack">' + signup() +
       (current ? courts(current) : '<section class="panel"><h2>Lapangan</h2>' + empty('Host belum membuka sesi.') + '</section>') + '</div>' :
-      tab === 'riwayat' ? history() : standings();
+      tab === 'riwayat' ? history() : tab === 'mvp' ? monthlyMvp() : standings();
     layout('<div class="member-' + tab + '">' + body + '</div>', memberNav(tab), path);
     root.querySelectorAll('[data-tier]').forEach(control => control.addEventListener('click', () => {
       selectedTier = control.dataset.tier;
@@ -110,6 +111,15 @@ export async function member(path) {
       render();
       feedback('Nama sudah masuk daftar main.');
     });
+  }
+
+  function monthlyMvp() {
+    return hero('Player of the', 'Month', 'Pemain dengan kenaikan bersih tertinggi dari hasil resmi bulan itu.') +
+      '<div class="court-grid">' + data.monthlyMvp.map(({ month, winners }, index) =>
+        '<section class="panel mvp-panel"><div class="section-head"><h2>' +
+        esc(monthLabel.format(new Date(month + '-01T00:00:00Z'))) + '</h2>' + badge(index ? 'Bulan lalu' : 'Sementara') + '</div>' +
+        (winners.length ? '<ul class="mvp-winners">' + winners.map(name => '<li>' + esc(name) + '</li>').join('') + '</ul>' :
+          empty('Belum ada pemain dengan kenaikan rating.')) + '</section>').join('') + '</div>';
   }
 
   render();

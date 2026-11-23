@@ -302,7 +302,7 @@ test('QR hanya tersedia setelah laga selesai, laporan bersaing menunggu keputusa
   assert.equal((await f.request(reportPath, { playerId: s.players[0], score: [21, 8] })).status, 409);
   memberView = (await f.members()).value;
   assert.deepEqual(memberView.sessions[0].matches[0].score, [21, 9]);
-  assert.equal(memberView.players.find(player => player.id === s.players[0]).tier, 'E');
+  assert.equal(memberView.players.find(player => player.id === s.players[0]).tier, 'F');
   assert.equal(memberView.players.find(player => player.id === s.players[0]).calibration, 1);
   assert.doesNotMatch(JSON.stringify(memberView), /"(?:rating|code|audit|reports|delta)"\s*:/);
 });
@@ -362,9 +362,10 @@ test('host memilih tier awal, hanya pemain otomatis mendapat bonus kalibrasi', a
   assert.equal(manual.tier, 'F');
   assert.equal(manual.calibration, null);
   assert.equal(manual.wins, 1);
-  assert.equal(auto.tier, 'E');
+  assert.equal(auto.tier, 'F');
   assert.equal(auto.calibration, 1);
   assert.equal(auto.wins, 1);
+  assert.deepEqual(directory.monthlyMvp[0], { month: '2026-11', winners: [auto.display] });
   assert.doesNotMatch(JSON.stringify(directory), /"(?:rating|initialTier|canEditInitialTier)"\s*:/);
   assert.equal((await s.act({ ...edit, initialTier: 'S' })).status, 409);
   assert.equal((await s.act({ ...edit, initialTier: null })).status, 409);

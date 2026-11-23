@@ -57,47 +57,83 @@ export function validScore(score) {
   return (high === 21 && low <= 19) || (high > 21 && high < 30 && high - low === 2) || (high === 30 && (low === 28 || low === 29));
 }
 
-const tiers = [['SS', 1160], ['S', 1130], ['A', 1100], ['B', 1075], ['C', 1050], ['D', 1030], ['E', 1015], ['F', -Infinity]];
-const startingRatings = new Map(tiers.map(([tier, minimum], index) => {
-  const ceiling = tiers[index - 1]?.[1] ?? minimum + 30;
+const legacyTiers = [['SS', 1160], ['S', 1130], ['A', 1100], ['B', 1075], ['C', 1050], ['D', 1030], ['E', 1015], ['F', -Infinity]];
+const legacyStartingRatings = new Map(legacyTiers.map(([tier, minimum], index) => {
+  const ceiling = legacyTiers[index - 1]?.[1] ?? minimum + 30;
   return [tier, tier === 'F' ? 1000 : Math.floor((minimum + ceiling) / 2)];
 }));
-const tierOf = rating => tiers.find(([, minimum]) => rating >= minimum)[0];
+const tierOf = rating => legacyTiers[7 - Math.min(7, Math.floor(rating / 500))][0];
+const legacyTierOf = rating => legacyTiers.find(([, minimum]) => rating >= minimum)[0];
+function currentRating(legacyRating) {
+  if (legacyRating < 1000) return 250 * Math.exp((legacyRating - 1000) / 15);
+  if (legacyRating < 1015) return 250 + (legacyRating - 1000) * 250 / 15;
+  const index = legacyTiers.findIndex(([, minimum]) => legacyRating >= minimum);
+  const minimum = legacyTiers[index][1];
+  const ceiling = legacyTiers[index - 1]?.[1] ?? minimum + 30;
+  return (7 - index) * 500 + (legacyRating - minimum) * 500 / (ceiling - minimum);
+}
 const allMatches = club => club.sessions.flatMap(session => session.matches);
 const teamAverage = (team, strength) => team.reduce((total, playerId) => total + strength.get(playerId).rating, 0) / team.length;
 
-export function standings(club) {
+function resultPoints(difference, margin, legacy) {
+  if (legacy) {
+    const expected = 1 / (1 + 10 ** (-difference / 100));
+    const base = margin <= 4 ? 3 : margin <= 8 ? 5 : 8;
+    return Math.max(1, Math.round(2 * base * (1 - expected)));
+  }
+  if (Math.abs(difference) <= 100) return 16;
+  const marginBonus = Math.max(0, Math.min(6, Math.round((margin - 2) * 6 / 10)));
+  return (difference < 0 ? 24 : 2) + marginBonus;
+}
+
+export function standings(club, awardMonths = []) {
   const strength = new Map(club.players.map(player => [player.id, {
-    rating: startingRatings.get(player.initialTier ?? 'F'), usesCalibration: !player.initialTier,
-    games: 0, wins: 0, losses: 0, history: [],
+    rating: legacyStartingRatings.get(player.initialTier ?? 'F'), usesCalibration: !player.initialTier,
+    games: 0, wins: 0, losses: 0, history: [], monthly: new Map(),
   }]));
   const matches = allMatches(club).filter(match => match.score).sort((left, right) => left.finishOrder - right.finishOrder);
+  let legacy = true;
+  const migrateRatings = () => {
+    for (const player of strength.values()) player.rating = currentRating(player.rating);
+    legacy = false;
+  };
 
   for (const match of matches) {
+    if (legacy && match.ratingVersion === 2) migrateRatings();
     const winner = Number(match.score[1] > match.score[0]);
     const winnerTeam = match.teams[winner];
     const loserTeam = match.teams[1 - winner];
     const difference = teamAverage(winnerTeam, strength) - teamAverage(loserTeam, strength);
-    const expected = 1 / (1 + 10 ** (-difference / 100));
     const margin = Math.abs(match.score[0] - match.score[1]);
-    const base = margin <= 4 ? 3 : margin <= 8 ? 5 : 8;
-    const change = Math.max(1, Math.round(2 * base * (1 - expected)));
+    const change = resultPoints(difference, margin, legacy);
+    const month = awardMonths.length && match.finishedAt ? day(new Date(match.finishedAt)).slice(0, 7) : null;
+    const trackAward = awardMonths.includes(month);
+    const getTier = legacy ? legacyTierOf : tierOf;
+    const ratingForAward = legacy ? currentRating : rating => rating;
 
     match.teams.forEach((team, index) => {
       for (const playerId of team) {
         const player = strength.get(playerId);
         const won = index === winner;
         const calibrating = player.usesCalibration && player.games < 5;
-        const before = tierOf(player.rating);
-        player.rating += won ? change * (calibrating ? 3 : 1) : -(calibrating ? Math.ceil(change / 2) : change);
+        const before = getTier(player.rating);
+        const startingRating = player.rating;
+        const adjustment = won ? change * (calibrating ? 3 : 1) : -(calibrating ? Math.ceil(change / 2) : change);
+        player.rating += adjustment;
+        if (!legacy) player.rating = Math.max(0, player.rating);
+        if (trackAward) {
+          const gain = ratingForAward(player.rating) - ratingForAward(startingRating);
+          player.monthly.set(month, (player.monthly.get(month) ?? 0) + gain);
+        }
         player.games++;
         if (won) player.wins++;
         else player.losses++;
-        const after = tierOf(player.rating);
+        const after = getTier(player.rating);
         if (before !== after) player.history.push({ date: match.finishedAt, from: before, to: after });
       }
     });
   }
+  if (legacy) migrateRatings();
   return strength;
 }
 
@@ -164,8 +200,8 @@ export function suggestOptions(club, session, locked) {
     for(let i=start;i<=tied.length-(4-ids.length);i++) choose(i+1,[...ids,tied[i]]);
   }
   choose(0,fixed);
-  // B and C start 25 rating points apart. Allow up to half that gap for variety.
-  const tolerance=(startingRatings.get('B')-startingRatings.get('C'))/2;
+  // Allow some rating difference when choosing varied lineups.
+  const tolerance = 250;
   const bestGap=Math.min(...candidates.map(c=>c.gap));
   const competitive = candidates.filter(c => c.gap <= bestGap + tolerance);
   const shown = new Map(), options = [];
@@ -194,7 +230,7 @@ export function applyHost(club, data, now, host) {
     const name = validateName(data.name, true);
     const nickname = validateName(data.nickname ?? '', false);
     const initialTier = data.initialTier ?? null;
-    requireRule(initialTier === null || startingRatings.has(initialTier), 'Pilihan tier awal tidak valid.');
+    requireRule(initialTier === null || legacyStartingRatings.has(initialTier), 'Pilihan tier awal tidak valid.');
     const display = label({ name, nickname }).toLocaleLowerCase('id');
     requireRule(!club.players.some(player => player.id !== data.playerId && label(player).toLocaleLowerCase('id') === display), 'Nama tampilan ini sudah ada.', 409);
     if (action === 'addPlayer') {
@@ -351,6 +387,7 @@ export function applyHost(club, data, now, host) {
     match.status = 'finished';
     match.finishedAt = now.toISOString();
     match.finishOrder = ++club.sequence;
+    match.ratingVersion = 2;
     for (const playerId of match.teams.flat()) {
       if (playerReady(club, session, playerId)) session.attendance[playerId].since = match.finishedAt;
     }
@@ -396,7 +433,10 @@ export function addSignup(club, data, now) {
 }
 
 export function clubView(club, now, host = false) {
-  const strength = standings(club);
+  const currentMonth = day(now).slice(0, 7);
+  const previousMonth = moveDay(currentMonth + '-01', -1).slice(0, 7);
+  const awardMonths = host ? [] : [currentMonth, previousMonth];
+  const strength = standings(club, awardMonths);
   const roster = club.players.slice().sort(byName).map(player => {
     const stats = strength.get(player.id);
     return {
@@ -414,6 +454,14 @@ export function clubView(club, now, host = false) {
   const sessionPlan = host ? courtPlan(club, nextTuesday(club, now)) : undefined;
   return {
     players: host ? roster : ranked,
+    ...(host ? {} : { monthlyMvp: awardMonths.map(month => {
+      const gains = roster.map(player => Math.round(strength.get(player.id).monthly.get(month) ?? 0));
+      const best = Math.max(0, ...gains);
+      return {
+        month,
+        winners: best > 0 ? roster.filter((_, index) => gains[index] === best).map(player => player.display) : [],
+      };
+    }) }),
     ...(sessionPlan ? { sessionDate: sessionPlan.date, sessionMinDate: day(now), suggestedSessionCourts: sessionPlan.courts } : {}),
     signup,
     sessions: club.sessions.slice().reverse().map(session => ({

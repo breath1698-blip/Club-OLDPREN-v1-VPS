@@ -1,4 +1,4 @@
-import { api, layout, hero, esc, dateText, badge, teams, scoreText, bindForm, field } from './ui.js?v=6';
+import { api, layout, hero, esc, dateText, badge, teams, scoreText, bindForm, field } from './ui.js?v=13';
 
 export async function report(path) {
   const endpoint = '/api/report/' + path.split('/')[2];

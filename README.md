@@ -61,6 +61,14 @@ Simpan unit sebagai /etc/systemd/system/club-oldpren.service. Jalankan sudo syst
 - **Lapangan** di panel host untuk isi tim, meminta saran susunan, dan mulai serta selesaikan laga. Jika QR aktif saat laga selesai, layar menampilkan QR pertandingan. Host juga bisa membuka QR dari tab Skor selama QR aktif.
 - **Skor** di panel host untuk menyetujui, menolak, mengisi, dan mengoreksi skor. Laporan QR diterima pada hari Selasa WIB selama sesi terbuka, setelah laga selesai dan sebelum skor resmi.
 - **Tierlist** menampilkan semua tier dari SS sampai F secara default. Pilih satu tier untuk memfilter. Win Rate dihitung dari kemenangan dibagi jumlah pertandingan resmi. Tap nama pemain untuk melihat progres kalibrasi, statistik, dan riwayat perubahan tier. Sistem menghitung ulang riwayat setelah koreksi skor resmi.
+- **MVP** menampilkan pemain dengan kenaikan rating bersih tertinggi bulan ini (sementara) dan bulan lalu, mengikuti WIB dan waktu laga selesai. Skor harus resmi. Pemain dengan kenaikan positif yang sama berbagi gelar. Angka rating disimpan di server.
+
+### Perhitungan rating
+
+- Tier F mulai dari 0. Tiap 500 poin naik satu tier sampai SS mulai dari 3.500. Pemain baru dengan kalibrasi otomatis mulai dari tengah Tier F.
+- Kekuatan tiap tim dihitung dari rata-rata rating pemainnya. Selisih hingga 100 poin dianggap setara dan hasilnya ±16 poin. Saat tim lebih kuat menang, perpindahannya 2–8 poin. Saat tim lebih lemah menang, perpindahannya 24–30 poin. Selisih skor yang lebih besar menaikkan perpindahan dalam kisaran itu.
+- Selama lima pertandingan kalibrasi, kemenangan memberi tiga kali poin dan pengurangan karena kalah dibagi dua (dibulatkan ke atas). Tier awal manual langsung memakai aturan reguler.
+- Laga lama dihitung ulang dengan aturan yang berlaku saat laga itu dimainkan, lalu dipetakan ke skala baru sebelum laga dengan aturan baru. Pemetaan mempertahankan tier pemain dan tidak dihitung sebagai kenaikan MVP.
 
 ## Backup dan akses
 
