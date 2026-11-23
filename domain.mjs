@@ -238,11 +238,16 @@ export function applyHost(club, data, now, host) {
 
   const session = club.sessions.find(item => item.id === data.sessionId);
   requireRule(session, 'Sesi tidak ditemukan.', 404);
-  if (action === 'score' || action === 'rejectReport') {
+  if (action === 'score' || action === 'rejectReport' || action === 'deleteScore') {
     const match = session.matches.find(item => item.id === data.matchId);
     requireRule(match && ['finished', 'unscored'].includes(match.status), 'Hasil hanya bisa dicatat setelah laga selesai.', 409);
     requireRule(match.revision === data.revision, 'Data berubah di perangkat lain. Muat ulang lalu coba lagi.', 409);
-    if (action === 'rejectReport') {
+    if (action === 'deleteScore') {
+      requireRule(Boolean(match.score), 'Tidak ada skor resmi yang bisa dihapus.', 409);
+      match.audit.push({ previous: match.score, score: null, at: now.toISOString(), host });
+      match.score = null;
+      match.scoreDeleted = true;
+    } else if (action === 'rejectReport') {
       requireRule(!match.score, 'Skor sudah resmi.', 409);
       const report = match.reports.find(item => item.id === data.reportId && item.status === 'pending');
       requireRule(report, 'Usulan sudah diproses.', 409);
@@ -254,6 +259,7 @@ export function applyHost(club, data, now, host) {
       if (!match.score || match.score.some((points, index) => points !== data.score[index])) {
         match.audit.push({ previous: match.score, score: data.score, at: now.toISOString(), host });
         match.score = data.score;
+        delete match.scoreDeleted;
       }
       match.status = 'finished';
       for (const item of match.reports) {
@@ -342,7 +348,7 @@ export function lookupMatch(club, code) {
 }
 
 export function canReport(session, match, now) {
-  return !session.closed && session.date === day(now) && isTuesday(session.date) && match.status === 'finished' && !match.score;
+  return !session.closed && session.date === day(now) && isTuesday(session.date) && match.status === 'finished' && !match.score && !match.scoreDeleted;
 }
 
 export function addReport(club, code, data, now) {
@@ -392,14 +398,14 @@ export function clubView(club, now, host = false) {
         attendance: session.attendance, registered: club.signups[session.date] ?? [],
         canReschedule: !session.closed && !session.matches.some(match => match.startedAt),
       } : {}),
-      matches: session.matches.map(match => ({
+      matches: session.matches.filter(match => host || !match.scoreDeleted).map(match => ({
         id: match.id, court: match.court, status: match.status, finishedAt: match.finishedAt,
         teams: match.teams.map(team => team.map(playerId => {
           const player = roster.find(item => item.id === playerId);
           return { id: player.id, display: player.display, tier: player.tier };
         })),
         score: match.score,
-        ...(host ? { revision: match.revision, reports: match.reports, audit: match.audit, reportOpen: canReport(session, match, now) } : {}),
+        ...(host ? { scoreDeleted: Boolean(match.scoreDeleted), revision: match.revision, reports: match.reports, audit: match.audit, reportOpen: canReport(session, match, now) } : {}),
       })),
     })),
   };

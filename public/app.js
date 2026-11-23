@@ -1,7 +1,7 @@
 import { layout, hero, esc } from './ui.js?v=6';
 import { member } from './member.js?v=11';
 import { report } from './report.js?v=6';
-import { host } from './host.js?v=12';
+import { host } from './host.js?v=13';
 
 const path = location.pathname;
 try {

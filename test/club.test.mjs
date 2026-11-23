@@ -93,6 +93,32 @@ async function sessionWithPlayers(f, count = 4, date) {
   return { cookie, act, write, players, sessionId, teams, create, start, finish, score, qr, reportPath, origin: f.origin };
 }
 
+test('host dapat menghapus hanya skor pilihan dari riwayat anggota dan statistik', async t => {
+  const f = await fixture(t);
+  const s = await sessionWithPlayers(f);
+  const finish = async points => {
+    const id = await s.create(); await s.start(id); await s.finish(id); await s.score(id, points); return id;
+  };
+  const keep = await finish([21, 18]), remove = await finish([18, 21]);
+  const payload = { action: 'deleteScore', sessionId: s.sessionId, matchId: remove, revision: 1 };
+  assert.equal((await f.request('/api/host', payload)).status, 401);
+  assert.equal((await s.act({ ...payload, revision: 0 })).status, 409);
+  const v = await s.write(payload);
+  const deleted = v.sessions[0].matches.find(m => m.id === remove);
+  assert.equal(deleted.score, null); assert.equal(deleted.reportOpen, false);
+  assert.equal(deleted.scoreDeleted, true);
+  assert.equal((await s.act(payload)).status, 409);
+  await s.write({ action: 'closeSession', sessionId: s.sessionId });
+  const members = (await f.members()).value;
+  assert.deepEqual(members.sessions[0].matches.map(m => [m.id, m.score]), [[keep, [21, 18]]]);
+  assert.ok(members.players.every(p => p.games === 1));
+  assert.equal(members.players.find(p => p.id === s.players[0]).wins, 1);
+  await s.write({ ...payload, matchId: keep });
+  assert.deepEqual((await f.members()).value.sessions[0].matches, []);
+  await s.score(remove, [21, 19], deleted.revision);
+  assert.deepEqual((await f.members()).value.sessions[0].matches.map(m => m.id), [remove]);
+});
+
 test('host hanya bisa mengganti kredensial sendiri dan perubahan bertahan setelah restart', async t => {
   const folder = mkdtempSync(join(tmpdir(), 'oldpren-auth-'));
   const database = join(folder, 'test.sqlite');

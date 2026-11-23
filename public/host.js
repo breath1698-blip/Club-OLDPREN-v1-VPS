@@ -122,13 +122,14 @@ export async function host() {
           }).join('');
           const audit = match.audit.length ? '<details class="audit"><summary>Riwayat pengesahan</summary><ul class="history">' +
             match.audit.slice().reverse().map(row => '<li><time>' + esc(dateShort(row.at)) + '</time><span>' + esc(row.host) + ' · ' +
-              (row.previous ? scoreText(row.previous) + ' → ' : '') + scoreText(row.score) + '</span></li>').join('') + '</ul></details>' : '';
+              (row.previous ? scoreText(row.previous) + ' → ' : '') + (row.score ? scoreText(row.score) : 'Skor dihapus') + '</span></li>').join('') + '</ul></details>' : '';
           return '<article class="match review"><div class="section-head"><h3>Lapangan ' + match.court + '</h3>' +
-            badge(match.score ? 'Skor resmi' : matchStatus[match.status]) + '</div>' + teams(match) +
+            badge(match.scoreDeleted ? 'Skor dihapus' : match.score ? 'Skor resmi' : matchStatus[match.status]) + '</div>' + teams(match) +
             (match.score ? '<p class="result">' + scoreText(match.score) + '</p>' : '') +
             (pending ? '<h4>Usulan pemain</h4><ul class="host-list">' + pending + '</ul>' : '') +
             '<div class="actions">' + (match.reportOpen ? button('Tampilkan QR', 'type="button" data-qr="' + esc(match.id) + '"') : '') +
-            button(match.score ? 'Koreksi skor' : 'Isi skor', 'type="button" data-score="' + esc(JSON.stringify(common)) + '"') + '</div>' + audit + '</article>';
+            button(match.score ? 'Koreksi skor' : 'Isi skor', 'type="button" data-score="' + esc(JSON.stringify(common)) + '"') +
+            (match.score ? actionButton('Hapus skor', { ...common, action: 'deleteScore' }, 'button compact') : '') + '</div>' + audit + '</article>';
         }).join('') + '</div></details>').join('') + '</div>' : '<section class="panel">' + empty('Skor bisa dicatat setelah pertandingan selesai.') + '</section>');
   }
 
@@ -145,7 +146,7 @@ export async function host() {
         if (match.reportOpen) await showQR(match.id);
         else feedback('Laga selesai. Skor bisa diisi dari tab Skor.');
       } else {
-        const captions = { score: 'Skor resmi disimpan.', rejectReport: 'Usulan skor ditolak.', addPlayer: 'Pemain ditambahkan.', editPlayer: 'Pemain diperbarui.', removeSignup: 'Nama dikeluarkan dari daftar.', rescheduleSession: 'Tanggal sesi diperbarui.' };
+        const captions = { deleteScore: 'Skor dihapus dari Riwayat dan statistik pemain.', score: 'Skor resmi disimpan.', rejectReport: 'Usulan skor ditolak.', addPlayer: 'Pemain ditambahkan.', editPlayer: 'Pemain diperbarui.', removeSignup: 'Nama dikeluarkan dari daftar.', rescheduleSession: 'Tanggal sesi diperbarui.' };
         if (captions[payload.action]) feedback(captions[payload.action]);
         if (payload.action === 'archivePlayer') feedback(payload.archived ? 'Pemain diarsipkan.' : 'Pemain diaktifkan kembali.');
       }
@@ -304,6 +305,12 @@ export async function host() {
     root.querySelectorAll('[data-action]').forEach(control => control.addEventListener('click', () => {
       const payload = JSON.parse(control.dataset.action);
       const questions = { closeSession: 'Tutup sesi ini? QR akan ikut ditutup.', cancelMatch: 'Batalkan pertandingan ini?' };
+      if (payload.action === 'deleteScore') {
+        const chosen = data.sessions.find(s => s.id === payload.sessionId);
+        const match = chosen?.matches.find(m => m.id === payload.matchId);
+        if (!match?.score) return;
+        questions.deleteScore = `Hapus skor ${scoreText(match.score)}?\n${dateText(chosen.date)} · Lapangan ${match.court}\n${match.teams.map(team => team.map(p => p.display).join(' & ')).join(' vs ')}\nLaga ini tidak akan tampil di Riwayat anggota dan skornya tidak lagi dihitung dalam tierlist.`;
+      }
       if (questions[payload.action] && !confirm(questions[payload.action])) return;
       run(control, () => update(payload));
     }));
