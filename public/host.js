@@ -66,15 +66,31 @@ export async function host() {
 
   function courts(session) {
     const nicknames = new Map(data.players.map(player => [player.id, player.nickname]));
-    return '<section><div class="section-head"><h2>Lapangan (' + session.courts + ')</h2><a class="button compact" href="#skor">Kelola skor</a></div>' +
-      '<div class="court-grid">' + Array.from({ length: session.courts }, (_, index) => {
-        const court = index + 1;
+    return '<section><div class="section-head"><h2>Lapangan (' + session.courts + ')</h2><div class="actions"><button type="button" class="button compact" id="manage-courts">Kelola Lapangan</button><a class="button compact" href="#skor">Kelola skor</a></div></div>' +
+      (!session.courts ? empty('Belum ada lapangan aktif.') : '') + '<div class="court-grid">' + session.activeCourts.map(court => {
         const matches = session.matches.filter(match => match.court === court && ['active', 'queued'].includes(match.status))
           .sort((a, b) => a.status.localeCompare(b.status));
         return '<article class="panel court"><h3>Lapangan ' + court + '</h3>' +
           (matches.length ? matches.map(match => courtMatch(session, match, nicknames)).join('') : empty('Lapangan kosong.')) +
           (!matches.some(match => match.status === 'queued') ? button('Susun laga', 'type="button" data-court="' + court + '"', 'button full') : '') + '</article>';
       }).join('') + '</div></section>';
+  }
+
+  function manageCourts(session) {
+    const numbers = session.activeCourts;
+    const available = Array.from({length:20}, (_,i) => i+1).filter(n => !numbers.includes(n));
+    const rows = numbers.map(n => {
+      const busyCourt = session.matches.some(m => m.court === n && ['active','queued'].includes(m.status));
+      return '<li><strong>Lapangan ' + n + '</strong>' + (busyCourt ? badge('Ada laga aktif / antre') : button('Nonaktifkan', 'type="button" data-disable-court="' + n + '"', 'button compact')) + '</li>';
+    }).join('');
+    const dialog = popup('Kelola Lapangan', '<p>' + esc(dateText(session.date)) + ' · Perubahan hanya untuk sesi ini.</p>' +
+      (rows ? '<ul class="host-list">' + rows + '</ul>' : empty('Belum ada lapangan aktif.')) +
+      (available.length ? '<form class="stack" id="enable-court"><label>Nomor lapangan<select name="court">' + available.map(n => '<option value="' + n + '">Lapangan ' + n + '</option>').join('') + '</select></label><button class="button solid">Tambah / aktifkan lapangan</button></form>' : empty('Semua nomor lapangan sudah aktif.')));
+    bindForm('enable-court', form => update({action:'activateCourt', sessionId:session.id, court:Number(form.get('court'))}, dialog), dialog);
+    dialog.querySelectorAll('[data-disable-court]').forEach(control => control.addEventListener('click', () => {
+      const court = Number(control.dataset.disableCourt);
+      if (confirm(`Nonaktifkan Lapangan ${court} untuk sesi ini? Riwayat laga tetap tersimpan.`)) run(control, () => update({action:'deactivateCourt', sessionId:session.id, court}, dialog));
+    }));
   }
 
   function sessionPage(session) {
@@ -301,6 +317,7 @@ export async function host() {
       const courts = form.get('courts');
       return update({ action: 'openSession', date: form.get('date'), courts: courts ? Number(courts) : undefined });
     });
+    root.querySelector('#manage-courts')?.addEventListener('click', () => manageCourts(session));
     root.querySelector('#reschedule-session')?.addEventListener('click', () => rescheduleDialog(session));
     root.querySelectorAll('[data-action]').forEach(control => control.addEventListener('click', () => {
       const payload = JSON.parse(control.dataset.action);

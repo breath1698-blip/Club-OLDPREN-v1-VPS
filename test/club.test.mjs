@@ -93,6 +93,29 @@ async function sessionWithPlayers(f, count = 4, date) {
   return { cookie, act, write, players, sessionId, teams, create, start, finish, score, qr, reportPath, origin: f.origin };
 }
 
+test('host mengelola nomor lapangan per sesi tanpa mengubah riwayat laga', async t => {
+  const f = await fixture(t), s = await sessionWithPlayers(f);
+  const change = (action, court) => ({ action, court, sessionId:s.sessionId });
+  assert.equal((await f.request('/api/host', change('activateCourt',5))).status,401);
+  await s.write(change('activateCourt',5));
+  assert.deepEqual((await f.members()).value.sessions[0].activeCourts,[1,2,5]);
+  assert.equal((await s.act(change('activateCourt',5))).status,409);
+  assert.equal((await s.act(change('activateCourt',21))).status,400);
+  const m = await s.create(5);
+  assert.equal((await s.act(change('deactivateCourt',5))).status,409);
+  await s.start(m);
+  assert.equal((await s.act(change('deactivateCourt',5))).status,409);
+  await s.finish(m); await s.score(m,[21,18]);
+  await s.write(change('deactivateCourt',5));
+  assert.equal((await s.act({...change('createMatch',5),teams:s.teams})).status,400);
+  const view=(await f.members()).value.sessions[0];
+  assert.deepEqual(view.activeCourts,[1,2]); assert.equal(view.courts,2);
+  assert.equal(view.matches[0].court,5); assert.deepEqual(view.matches[0].score,[21,18]);
+  await s.write(change('activateCourt',5));
+  await s.write({action:'closeSession',sessionId:s.sessionId});
+  assert.equal((await s.act(change('deactivateCourt',5))).status,409);
+});
+
 test('host dapat menghapus hanya skor pilihan dari riwayat anggota dan statistik', async t => {
   const f = await fixture(t);
   const s = await sessionWithPlayers(f);

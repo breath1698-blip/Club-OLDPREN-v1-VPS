@@ -66,9 +66,9 @@ export async function member(path) {
     const nicknames = new Map(data.players.map(player => [player.id, player.nickname]));
     return '<section class="member-courts"><div class="section-head"><div><h2>Lapangan</h2><p>' + esc(dateText(session.date)) + '</p></div>' +
       badge(session.courts + ' lapangan · ' + session.present + ' hadir') + '</div><div class="court-grid">' +
-      Array.from({ length: session.courts }, (_, index) => {
-        const matches = session.matches.filter(match => match.court === index + 1 && ['active', 'queued'].includes(match.status));
-        return '<article class="panel member-court"><h3>Lapangan ' + (index + 1) + '</h3>' + (matches.length ? matches.sort((a, b) => a.status.localeCompare(b.status)).map(match => memberMatch(match, nicknames)).join('') : empty('Belum ada pertandingan.')) + '</article>';
+      session.activeCourts.map(court => {
+        const matches = session.matches.filter(match => match.court === court && ['active', 'queued'].includes(match.status));
+        return '<article class="panel member-court"><h3>Lapangan ' + court + '</h3>' + (matches.length ? matches.sort((a, b) => a.status.localeCompare(b.status)).map(match => memberMatch(match, nicknames)).join('') : empty('Belum ada pertandingan.')) + '</article>';
       }).join('') + '</div></section>';
   }
 

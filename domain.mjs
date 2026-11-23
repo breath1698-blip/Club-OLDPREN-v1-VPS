@@ -30,6 +30,8 @@ function validateSessionDate(club, date, now, sessionId) {
 }
 
 const maxCourts = 20;
+// Sessions created before individually numbered courts stored only their count.
+const activeCourts = session => session.activeCourts ?? Array.from({ length: session.courts }, (_, i) => i + 1);
 
 function courtPlan(club, date) {
   const playerIds = (club.signups[date] ?? []).filter(playerId =>
@@ -271,6 +273,21 @@ export function applyHost(club, data, now, host) {
   }
 
   requireRule(!session.closed, 'Sesi sudah ditutup.', 409);
+  if (action === 'activateCourt' || action === 'deactivateCourt') {
+    const court = data.court;
+    requireRule(Number.isInteger(court) && court >= 1 && court <= maxCourts, 'Pilih nomor lapangan antara 1 dan ' + maxCourts + '.');
+    const current = activeCourts(session);
+    if (action === 'activateCourt') {
+      requireRule(!current.includes(court), 'Lapangan ini sudah aktif.', 409);
+      session.activeCourts = [...current, court].sort((a,b) => a-b);
+    } else {
+      requireRule(current.includes(court), 'Lapangan ini sudah nonaktif.', 409);
+      requireRule(!session.matches.some(m => m.court === court && ['active','queued'].includes(m.status)), 'Selesaikan atau batalkan laga di lapangan ini dulu.', 409);
+      session.activeCourts = current.filter(n => n !== court);
+    }
+    session.courts = session.activeCourts.length;
+    return;
+  }
   if (action === 'rescheduleSession') {
     requireRule(!session.matches.some(match => match.startedAt), 'Tanggal terkunci setelah pertandingan pertama dimulai.', 409);
     session.date = validateSessionDate(club, data.date, now, session.id);
@@ -298,7 +315,7 @@ export function applyHost(club, data, now, host) {
     return;
   }
   if (action === 'createMatch') {
-    requireRule(Number.isInteger(data.court) && data.court >= 1 && data.court <= session.courts, 'Lapangan tidak valid.');
+    requireRule(activeCourts(session).includes(data.court), 'Lapangan tidak valid.');
     const { teams } = data;
     requireRule(Array.isArray(teams) && teams.length === 2 && teams.every(team => Array.isArray(team) && team.length === 2), 'Isi dua pemain untuk setiap tim.');
     const players = teams.flat();
@@ -392,7 +409,7 @@ export function clubView(club, now, host = false) {
     ...(sessionPlan ? { sessionDate: sessionPlan.date, sessionMinDate: day(now), suggestedSessionCourts: sessionPlan.courts } : {}),
     signup,
     sessions: club.sessions.slice().reverse().map(session => ({
-      id: session.id, date: session.date, courts: session.courts, closed: session.closed,
+      id: session.id, date: session.date, courts: session.courts, activeCourts: activeCourts(session), closed: session.closed,
       present: Object.values(session.attendance).filter(record => record.status !== 'absent').length,
       ...(host ? {
         attendance: session.attendance, registered: club.signups[session.date] ?? [],
