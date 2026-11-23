@@ -1,4 +1,4 @@
-import { api, root, layout, nav, hero, esc, page, dateText, dateShort, tiers, tierBadge, tierCaption, empty, teams, matchStatus, badge, scoreText, bindForm, feedback, popup, run, clipboard, field, button } from './ui.js?v=6';
+import { api, root, layout, nav, memberNav, hero, esc, page, dateText, dateShort, tiers, tierBadge, tierCaption, empty, teams, matchStatus, badge, scoreText, bindForm, feedback, popup, run, clipboard, field, button } from './ui.js?v=8';
 
 const endpoint = '/api/host';
 const tabs = [['sesi', 'Sesi Selasa'], ['skor', 'Skor'], ['roster', 'Roster'], ['akun', 'Akun']];
@@ -66,15 +66,31 @@ export async function host() {
 
   function courts(session) {
     const nicknames = new Map(data.players.map(player => [player.id, player.nickname]));
-    return '<section><div class="section-head"><h2>Lapangan (' + session.courts + ')</h2><a class="button compact" href="#skor">Kelola skor</a></div>' +
-      '<div class="court-grid">' + Array.from({ length: session.courts }, (_, index) => {
-        const court = index + 1;
+    return '<section><div class="section-head"><h2>Lapangan (' + session.courts + ')</h2><div class="actions"><button type="button" class="button compact" id="manage-courts">Kelola Lapangan</button><a class="button compact" href="#skor">Kelola skor</a></div></div>' +
+      (!session.courts ? empty('Belum ada lapangan aktif.') : '') + '<div class="court-grid">' + session.activeCourts.map(court => {
         const matches = session.matches.filter(match => match.court === court && ['active', 'queued'].includes(match.status))
           .sort((a, b) => a.status.localeCompare(b.status));
         return '<article class="panel court"><h3>Lapangan ' + court + '</h3>' +
           (matches.length ? matches.map(match => courtMatch(session, match, nicknames)).join('') : empty('Lapangan kosong.')) +
           (!matches.some(match => match.status === 'queued') ? button('Susun laga', 'type="button" data-court="' + court + '"', 'button full') : '') + '</article>';
       }).join('') + '</div></section>';
+  }
+
+  function manageCourts(session) {
+    const numbers = session.activeCourts;
+    const available = Array.from({length:20}, (_,i) => i+1).filter(n => !numbers.includes(n));
+    const rows = numbers.map(n => {
+      const busyCourt = session.matches.some(m => m.court === n && ['active','queued'].includes(m.status));
+      return '<li><strong>Lapangan ' + n + '</strong>' + (busyCourt ? badge('Ada laga aktif / antre') : button('Nonaktifkan', 'type="button" data-disable-court="' + n + '"', 'button compact')) + '</li>';
+    }).join('');
+    const dialog = popup('Kelola Lapangan', '<p>' + esc(dateText(session.date)) + ' · Perubahan hanya untuk sesi ini.</p>' +
+      (rows ? '<ul class="host-list">' + rows + '</ul>' : empty('Belum ada lapangan aktif.')) +
+      (available.length ? '<form class="stack" id="enable-court"><label>Nomor lapangan<select name="court">' + available.map(n => '<option value="' + n + '">Lapangan ' + n + '</option>').join('') + '</select></label><button class="button solid">Tambah / aktifkan lapangan</button></form>' : empty('Semua nomor lapangan sudah aktif.')));
+    bindForm('enable-court', form => update({action:'activateCourt', sessionId:session.id, court:Number(form.get('court'))}, dialog), dialog);
+    dialog.querySelectorAll('[data-disable-court]').forEach(control => control.addEventListener('click', () => {
+      const court = Number(control.dataset.disableCourt);
+      if (confirm(`Nonaktifkan Lapangan ${court} untuk sesi ini? Riwayat laga tetap tersimpan.`)) run(control, () => update({action:'deactivateCourt', sessionId:session.id, court}, dialog));
+    }));
   }
 
   function sessionPage(session) {
@@ -122,13 +138,15 @@ export async function host() {
           }).join('');
           const audit = match.audit.length ? '<details class="audit"><summary>Riwayat pengesahan</summary><ul class="history">' +
             match.audit.slice().reverse().map(row => '<li><time>' + esc(dateShort(row.at)) + '</time><span>' + esc(row.host) + ' · ' +
-              (row.previous ? scoreText(row.previous) + ' → ' : '') + scoreText(row.score) + '</span></li>').join('') + '</ul></details>' : '';
+              (row.previous ? scoreText(row.previous) + ' → ' : '') + (row.score ? scoreText(row.score) : 'Skor dihapus') + '</span></li>').join('') + '</ul></details>' : '';
           return '<article class="match review"><div class="section-head"><h3>Lapangan ' + match.court + '</h3>' +
-            badge(match.score ? 'Skor resmi' : matchStatus[match.status]) + '</div>' + teams(match) +
+            badge(match.scoreDeleted ? 'Skor dihapus' : match.score ? 'Skor resmi' : matchStatus[match.status]) + '</div>' + teams(match) +
             (match.score ? '<p class="result">' + scoreText(match.score) + '</p>' : '') +
             (pending ? '<h4>Usulan pemain</h4><ul class="host-list">' + pending + '</ul>' : '') +
             '<div class="actions">' + (match.reportOpen ? button('Tampilkan QR', 'type="button" data-qr="' + esc(match.id) + '"') : '') +
-            button(match.score ? 'Koreksi skor' : 'Isi skor', 'type="button" data-score="' + esc(JSON.stringify(common)) + '"') + '</div>' + audit + '</article>';
+            button(match.score ? 'Koreksi skor' : 'Isi skor', 'type="button" data-score="' + esc(JSON.stringify(common)) + '"') +
+            (match.score ? actionButton('Hapus skor', { ...common, action: 'deleteScore' }, 'button compact') : '') +
+            actionButton('Hapus laga', { ...common, action: 'deleteMatch' }, 'button compact') + '</div>' + audit + '</article>';
         }).join('') + '</div></details>').join('') + '</div>' : '<section class="panel">' + empty('Skor bisa dicatat setelah pertandingan selesai.') + '</section>');
   }
 
@@ -145,12 +163,16 @@ export async function host() {
         if (match.reportOpen) await showQR(match.id);
         else feedback('Laga selesai. Skor bisa diisi dari tab Skor.');
       } else {
-        const captions = { score: 'Skor resmi disimpan.', rejectReport: 'Usulan skor ditolak.', addPlayer: 'Pemain ditambahkan.', editPlayer: 'Pemain diperbarui.', removeSignup: 'Nama dikeluarkan dari daftar.', rescheduleSession: 'Tanggal sesi diperbarui.' };
+        const captions = { deleteMatch: 'Laga telah dihapus.', deleteScore: 'Skor dihapus dari Riwayat dan statistik pemain.', score: 'Skor resmi disimpan.', rejectReport: 'Usulan skor ditolak.', addPlayer: 'Pemain ditambahkan.', editPlayer: 'Pemain diperbarui.', removeSignup: 'Nama dikeluarkan dari daftar.', rescheduleSession: 'Tanggal sesi diperbarui.' };
         if (captions[payload.action]) feedback(captions[payload.action]);
         if (payload.action === 'archivePlayer') feedback(payload.archived ? 'Pemain diarsipkan.' : 'Pemain diaktifkan kembali.');
       }
     } catch (error) {
       if (error.status === 401) { data = undefined; dialog?.close(); render(); }
+      if (error.status === 409 && payload.action === 'createMatch') {
+        data = await api(endpoint); dialog?.close(); render();
+        throw new Error(error.message + ' Buka Susun laga lagi untuk saran terbaru.');
+      }
       if (error.status === 409 && payload.revision !== undefined) { data = await api(endpoint); dialog?.close(); render(); }
       throw error;
     } finally { busy = false; }
@@ -181,10 +203,10 @@ export async function host() {
       feedback('Butuh empat pemain siap yang belum terjadwal.', true);
       return;
     }
-    const options = choices.map(player => '<option value="' + esc(player.id) + '">' + esc(player.display) + ' · ' + player.tier + '</option>').join('');
+    const playerOptions = choices.map(player => '<option value="' + esc(player.id) + '">' + esc(player.display) + ' · ' + player.tier + '</option>').join('');
     const select = index => '<select aria-label="Pemain ' + (index % 2 + 1) + ' Tim ' + (index < 2 ? 'A' : 'B') + '" name="p' + index +
-      '" required><option value="">Pilih pemain ' + (index % 2 + 1) + '</option>' + options + '</select>';
-    const dialog = popup('Susun laga · Lapangan ' + court, '<form id="compose" class="stack"><p class="muted">Pilih pemain atau minta saran untuk mengisi slot kosong.</p>' +
+      '" required><option value="">Pilih pemain ' + (index % 2 + 1) + '</option>' + playerOptions + '</select>';
+    const dialog = popup('Susun laga · Lapangan ' + court, '<form id="compose" class="stack"><p class="muted">Pilihan manual tetap di slotnya. Pilih baris kosong untuk melepasnya. Klik lagi untuk melihat alternatif sebelum menyimpan.</p>' +
       '<div class="compose-teams"><fieldset><legend>Tim A</legend>' + select(0) + select(1) + '</fieldset><fieldset><legend>Tim B</legend>' + select(2) + select(3) +
       '</fieldset></div><div class="compose-actions">' + button('Cari susunan seimbang', 'type="button" id="suggest"') +
       '<button class="button solid">Simpan laga</button></div></form>');
@@ -196,12 +218,27 @@ export async function host() {
         }
       }
     }
-    for (const control of selectors) control.addEventListener('change', refreshOptions);
-    dialog.querySelector('#suggest').addEventListener('click', event => run(event.currentTarget, async () => {
-      const suggestion = await api(endpoint + '/suggest', { sessionId: session.id, locked: selectors.map(control => control.value || null) });
-      suggestion.teams.flat().forEach((playerId, index) => { selectors[index].value = playerId; });
+    const pins = selectors.map(() => null);
+    const indicator = document.createElement('small');
+    indicator.setAttribute('role', 'status');
+    dialog.querySelector('.compose-actions').before(indicator);
+    let options = [], next = 0, generation = 0;
+    selectors.forEach((control, index) => control.addEventListener('change', () => {
+      pins[index] = control.value || null;
+      options = []; next = 0; generation++; indicator.textContent = '';
       refreshOptions();
-      feedback('Cek susunan, lalu simpan laga.');
+    }));
+    dialog.querySelector('#suggest').addEventListener('click', event => run(event.currentTarget, async () => {
+      if (!options.length) {
+        const requested = generation;
+        const suggestion = await api(endpoint + '/suggest', { sessionId: session.id, locked: pins });
+        if (requested !== generation || !dialog.open) return;
+        options = suggestion.alternatives;
+      }
+      options[next].flat().forEach((playerId, index) => { selectors[index].value = playerId; });
+      indicator.textContent = options.length === 1 ? 'Hanya satu susunan sesuai giliran, keseimbangan, dan pilihan manual.' : `Pilihan ${next + 1} dari ${options.length}`;
+      next = (next + 1) % options.length;
+      refreshOptions();
     }));
     bindForm('compose', form => update({
       action: 'createMatch', sessionId: session.id, court,
@@ -245,7 +282,7 @@ export async function host() {
       layout('<div class="narrow">' + hero('Masuk', 'Host', '') +
         '<form id="login" class="panel stack">' + field('username', 'Username', 'required maxlength="40" autocomplete="username"') +
         field('password', 'Password', 'required maxlength="256" type="password" autocomplete="current-password"') +
-        '<button class="button solid">Masuk</button></form></div>', '', '/host');
+        '<button class="button solid">Masuk</button></form></div>', memberNav('host', true), '/');
       bindForm('login', async form => {
         await api(endpoint + '/login', { username: form.get('username'), password: form.get('password') });
         data = await api(endpoint);
@@ -256,7 +293,7 @@ export async function host() {
     const selected = tabs.some(([id]) => id === page()) ? page() : 'sesi';
     const session = data.sessions.find(item => !item.closed);
     const content = selected === 'akun' ? accountPage() : selected === 'roster' ? roster() : selected === 'skor' ? scores() : sessionPage(session);
-    layout(content, '<div class="host-nav">' + nav(tabs, selected) + button('Keluar', 'type="button" id="logout"', 'button compact') + '</div>', '/host');
+    layout(content, '<div class="host-nav">' + nav([...tabs, ['tierlist', 'Tierlist', '/?tab=tierlist']], selected) + button('Keluar', 'type="button" id="logout"', 'button compact') + '</div>', '/host');
     root.querySelector('#attendance-panel')?.addEventListener('toggle', event => { attendanceOpen = event.currentTarget.open; });
     clipboard('copy-group', data.groupUrl);
     root.querySelector('#logout').addEventListener('click', event => run(event.currentTarget, async () => {
@@ -281,10 +318,19 @@ export async function host() {
       const courts = form.get('courts');
       return update({ action: 'openSession', date: form.get('date'), courts: courts ? Number(courts) : undefined });
     });
+    root.querySelector('#manage-courts')?.addEventListener('click', () => manageCourts(session));
     root.querySelector('#reschedule-session')?.addEventListener('click', () => rescheduleDialog(session));
     root.querySelectorAll('[data-action]').forEach(control => control.addEventListener('click', () => {
       const payload = JSON.parse(control.dataset.action);
       const questions = { closeSession: 'Tutup sesi ini? QR akan ikut ditutup.', cancelMatch: 'Batalkan pertandingan ini?' };
+      if (payload.action === 'deleteScore' || payload.action === 'deleteMatch') {
+        const chosen = data.sessions.find(s => s.id === payload.sessionId);
+        const match = chosen?.matches.find(m => m.id === payload.matchId);
+        if (!match || (payload.action === 'deleteScore' && !match.score)) return;
+        const fixture = `${dateText(chosen.date)} · Lapangan ${match.court}\n${match.teams.map(team => team.map(p => p.display).join(' & ')).join(' vs ')}`;
+        questions.deleteScore = `Hapus skor ${scoreText(match.score)}?\n${fixture}\nLaga ini tidak akan tampil di Riwayat anggota dan skornya tidak lagi dihitung dalam tierlist.`;
+        questions.deleteMatch = `Hapus laga ini secara permanen?\n${fixture}\nSkor: ${scoreText(match.score)}\nLaga, skor, dan semua laporannya akan dihapus. Tindakan ini tidak dapat dibatalkan.`;
+      }
       if (questions[payload.action] && !confirm(questions[payload.action])) return;
       run(control, () => update(payload));
     }));

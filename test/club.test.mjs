@@ -93,6 +93,81 @@ async function sessionWithPlayers(f, count = 4, date) {
   return { cookie, act, write, players, sessionId, teams, create, start, finish, score, qr, reportPath, origin: f.origin };
 }
 
+test('host mengelola nomor lapangan per sesi tanpa mengubah riwayat laga', async t => {
+  const f = await fixture(t), s = await sessionWithPlayers(f);
+  const change = (action, court) => ({ action, court, sessionId:s.sessionId });
+  assert.equal((await f.request('/api/host', change('activateCourt',5))).status,401);
+  await s.write(change('activateCourt',5));
+  assert.deepEqual((await f.members()).value.sessions[0].activeCourts,[1,2,5]);
+  assert.equal((await s.act(change('activateCourt',5))).status,409);
+  assert.equal((await s.act(change('activateCourt',21))).status,400);
+  const m = await s.create(5);
+  assert.equal((await s.act(change('deactivateCourt',5))).status,409);
+  await s.start(m);
+  assert.equal((await s.act(change('deactivateCourt',5))).status,409);
+  await s.finish(m); await s.score(m,[21,18]);
+  await s.write(change('deactivateCourt',5));
+  assert.equal((await s.act({...change('createMatch',5),teams:s.teams})).status,400);
+  const view=(await f.members()).value.sessions[0];
+  assert.deepEqual(view.activeCourts,[1,2]); assert.equal(view.courts,2);
+  assert.equal(view.matches[0].court,5); assert.deepEqual(view.matches[0].score,[21,18]);
+  await s.write(change('activateCourt',5));
+  await s.write({action:'closeSession',sessionId:s.sessionId});
+  assert.equal((await s.act(change('deactivateCourt',5))).status,409);
+});
+
+test('host dapat menghapus hanya skor pilihan dari riwayat anggota dan statistik', async t => {
+  const f = await fixture(t);
+  const s = await sessionWithPlayers(f);
+  const finish = async points => {
+    const id = await s.create(); await s.start(id); await s.finish(id); await s.score(id, points); return id;
+  };
+  const keep = await finish([21, 18]), remove = await finish([18, 21]);
+  const payload = { action: 'deleteScore', sessionId: s.sessionId, matchId: remove, revision: 1 };
+  assert.equal((await f.request('/api/host', payload)).status, 401);
+  assert.equal((await s.act({ ...payload, revision: 0 })).status, 409);
+  const v = await s.write(payload);
+  const deleted = v.sessions[0].matches.find(m => m.id === remove);
+  assert.equal(deleted.score, null); assert.equal(deleted.reportOpen, false);
+  assert.equal(deleted.scoreDeleted, true);
+  assert.equal((await s.act(payload)).status, 409);
+  await s.write({ action: 'closeSession', sessionId: s.sessionId });
+  const members = (await f.members()).value;
+  assert.deepEqual(members.sessions[0].matches.map(m => [m.id, m.score]), [[keep, [21, 18]]]);
+  assert.ok(members.players.every(p => p.games === 1));
+  assert.equal(members.players.find(p => p.id === s.players[0]).wins, 1);
+  await s.write({ ...payload, matchId: keep });
+  assert.deepEqual((await f.members()).value.sessions[0].matches, []);
+  await s.score(remove, [21, 19], deleted.revision);
+  assert.deepEqual((await f.members()).value.sessions[0].matches.map(m => m.id), [remove]);
+});
+
+test('hapus laga hanya menghapus satu laga selesai beserta skor, laporan, dan akses QR', async t => {
+  const f = await fixture(t), s = await sessionWithPlayers(f);
+  const keep = await s.create(); await s.start(keep); await s.finish(keep); await s.score(keep, [21, 18]);
+  const remove = await s.create();
+  const payload = { action: 'deleteMatch', sessionId: s.sessionId, matchId: remove, revision: 0 };
+  assert.equal((await f.request('/api/host', payload)).status, 401);
+  assert.equal((await s.act(payload)).status, 409);
+  await s.start(remove); assert.equal((await s.act(payload)).status, 409);
+  await s.finish(remove);
+  const report = await s.reportPath(remove);
+  assert.equal((await f.request(report, { playerId: s.players[0], score: [18, 21] })).status, 201);
+  await s.score(remove, [18, 21]);
+  assert.equal((await s.act(payload)).status, 409);
+  await s.write({ action: 'closeSession', sessionId: s.sessionId });
+  const view = await s.write({ ...payload, revision: 1 });
+  assert.deepEqual(view.sessions[0].matches.map(m => m.id), [keep]);
+  const members = (await f.members()).value;
+  assert.deepEqual(members.sessions[0].matches.map(m => [m.id, m.score]), [[keep, [21, 18]]]);
+  assert.ok(members.players.every(p => p.games === 1));
+  assert.equal((await f.request(report)).status, 404);
+  assert.equal((await s.act({ ...payload, revision: 1 })).status, 409);
+  const hidden = await s.write({ ...payload, action: 'deleteScore', matchId: keep, revision: 1 });
+  const empty = await s.write({ ...payload, matchId: keep, revision: hidden.sessions[0].matches[0].revision });
+  assert.deepEqual(empty.sessions[0].matches, []);
+});
+
 test('host hanya bisa mengganti kredensial sendiri dan perubahan bertahan setelah restart', async t => {
   const folder = mkdtempSync(join(tmpdir(), 'oldpren-auth-'));
   const database = join(folder, 'test.sqlite');
@@ -357,6 +432,8 @@ test('host mengunci pemain, bisa antrekan laga lain, dan pemain tidak aktif di d
   const s = await sessionWithPlayers(f, 8);
   const suggestion = await f.request('/api/host/suggest', { sessionId: s.sessionId, locked: [s.players[0], null, null, null] }, s.cookie);
   assert.equal(suggestion.status, 200);
+  assert.deepEqual(suggestion.value.teams, suggestion.value.alternatives[0]);
+  assert.ok(suggestion.value.alternatives.every(teams => teams[0][0] === s.players[0]));
   assert.equal(suggestion.value.teams[0][0], s.players[0]);
   assert.equal(new Set(suggestion.value.teams.flat()).size, 4);
   const first = await s.create();

@@ -30,6 +30,8 @@ function validateSessionDate(club, date, now, sessionId) {
 }
 
 const maxCourts = 20;
+// Sessions created before individually numbered courts stored only their count.
+const activeCourts = session => session.activeCourts ?? Array.from({ length: session.courts }, (_, i) => i + 1);
 
 function courtPlan(club, date) {
   const playerIds = (club.signups[date] ?? []).filter(playerId =>
@@ -106,62 +108,77 @@ const queuedIds = session => new Set(session.matches.filter(match => match.statu
 const playerReady = (club, session, playerId) => session.attendance[playerId]?.status === 'ready' && club.players.some(player => player.id === playerId && !player.archived);
 
 export function suggest(club, session, locked) {
+  return suggestOptions(club, session, locked)[0];
+}
+
+export function suggestOptions(club, session, locked) {
   requireRule(Array.isArray(locked) && locked.length === 4, 'Pilih empat slot pemain.');
   const busy = activeIds(session);
   const queued = queuedIds(session);
   const pins = locked.filter(Boolean);
-  const available = club.players.filter(player => playerReady(club, session, player.id) && !busy.has(player.id) && !queued.has(player.id));
+  const available = club.players.filter(player => !player.archived && session.attendance[player.id]?.status === 'ready' && !busy.has(player.id) && !queued.has(player.id));
   requireRule(new Set(pins).size === pins.length && pins.every(playerId => available.some(player => player.id === playerId)), 'Pemain yang dipilih sedang tidak tersedia.');
   requireRule(available.length >= 4, 'Butuh empat pemain siap main yang belum terjadwal.');
   const strength = standings(club);
-  const recent = session.matches.filter(match => ['finished', 'unscored'].includes(match.status)).slice(-8);
-  const priority = player => Date.parse(session.attendance[player.id].since);
-  const minPriority = Math.min(...available.map(priority));
-  // Kelompok tunggu dua menit memberi ruang untuk menyeimbangkan tim yang masuk antrean hampir bersamaan.
-  const waitingGroup = player => Math.floor((priority(player) - minPriority) / 120000);
-  const unordered = available.filter(player => !pins.includes(player.id))
-    .sort((left, right) => waitingGroup(left) - waitingGroup(right) || priority(left) - priority(right) || byName(left, right));
-  const needed = 4 - pins.length;
-  const seats = locked.map((playerId, index) => playerId ? -1 : index).filter(index => index >= 0);
-  const playersToUse = unordered.slice(0, needed);
-  const lastGroup = playersToUse.length ? waitingGroup(playersToUse.at(-1)) : 0;
-  const fixed = playersToUse.filter(player => waitingGroup(player) < lastGroup);
-  const flexible = unordered.filter(player => waitingGroup(player) === lastGroup);
-  let best = null;
-
-  function evaluate(candidate) {
-    const teams = [candidate.slice(0, 2), candidate.slice(2)];
-    const gap = Math.abs(teamAverage(teams[0], strength) - teamAverage(teams[1], strength));
-    let repeats = 0;
-    for (const match of recent) {
-      for (const [own, opposing] of [[teams[0], teams[1]], [teams[1], teams[0]]]) {
-        const prior = match.teams.find(team => team.includes(own[0]));
-        if (prior?.includes(own[1])) repeats += 2;
-        if (prior) {
-          const other = match.teams.find(team => team !== prior);
-          repeats += opposing.filter(playerId => other.includes(playerId)).length;
-        }
-      }
-    }
-    const merit = gap + Math.min(repeats, 8);
-    if (!best || merit < best.merit) best = { teams, merit };
-  }
-
-  // shortcut: cek 16 kandidat dari kelompok tunggu terakhir, perlu diperluas kalau host butuh semua kombinasi.
-  const pool = [...fixed, ...flexible.slice(0, 16)].map(player => player.id);
-  const mustUse = new Set(fixed.map(player => player.id));
-  function fill(seat, candidate, remaining) {
-    if (seat === seats.length) {
-      if (![...mustUse].some(playerId => remaining.includes(playerId))) evaluate(candidate);
-      return;
-    }
-    for (const playerId of remaining) {
-      candidate[seats[seat]] = playerId;
-      fill(seat + 1, candidate, remaining.filter(other => other !== playerId));
+  const played = session.matches.filter(m => ['finished','unscored'].includes(m.status)).sort((a,b) => a.finishOrder - b.finishOrder);
+  const games = new Map(), partners = new Map(), opponents = new Map();
+  const add = (map, key, weight) => map.set(key, (map.get(key) || 0) + weight);
+  const pair = (a,b) => a < b ? a + ':' + b : b + ':' + a;
+  for (const m of played) for (const id of m.teams.flat()) add(games, id, 1);
+  played.slice(-8).forEach(({teams:[a,b]}, i) => {
+    for (const t of [a,b]) add(partners, pair(...t), i+1);
+    for (const x of a) for (const y of b) add(opponents, pair(x,y), i+1);
+  });
+  const since = id => Date.parse(session.attendance[id].since);
+  const first = Math.min(...available.map(p => since(p.id)));
+  const group = id => Math.floor((since(id)-first)/120000);
+  const priority = (a,b) => group(a)-group(b) || (games.get(a)||0)-(games.get(b)||0);
+  const pool = available.map(p=>p.id).filter(id=>!pins.includes(id)).sort((a,b)=>priority(a,b) || a.localeCompare(b));
+  const needed = 4-pins.length;
+  if (!needed) return [[locked.slice(0,2),locked.slice(2)]];
+  const cutoff = pool[needed-1];
+  const fixed = [...pins,...pool.filter(id=>priority(id,cutoff)<0)];
+  let tied = pool.filter(id=>priority(id,cutoff)===0);
+  // Stratified sample across the whole tied queue; rotate the offset as matches finish.
+  const limit = 16;
+  if (tied.length > limit) tied = Array.from({length:limit}, (_,i)=>tied[(Math.floor(i*tied.length/limit)+played.length)%tied.length]);
+  const candidates = [];
+  function evaluate(ids) {
+    for (let mate=1; mate<4; mate++) {
+      const a=[ids[0],ids[mate]], b=ids.filter((_,i)=>i!==0 && i!==mate);
+      const oriented = [[a,b],[b,a]].find(sides=>locked.every((id,i)=>!id || sides[i>>1].includes(id)));
+      if (!oriented) continue;
+      const teams=oriented.map((team,i)=>{
+        const slots=locked.slice(2*i,2*i+2), free=team.filter(id=>!slots.includes(id));
+        return slots.map(id=>id || free.shift());
+      });
+      const gap=Math.abs(teamAverage(a,strength)-teamAverage(b,strength));
+      const partnersCost=(partners.get(pair(...a))||0)+(partners.get(pair(...b))||0);
+      let opponentsCost=0;
+      for(const x of a) for(const y of b) opponentsCost+=opponents.get(pair(x,y))||0;
+      candidates.push({teams,gap,partnersCost,opponentsCost});
     }
   }
-  fill(0, locked.slice(), pool);
-  return best.teams;
+  function choose(start,ids) {
+    if(ids.length===4) return evaluate(ids);
+    for(let i=start;i<=tied.length-(4-ids.length);i++) choose(i+1,[...ids,tied[i]]);
+  }
+  choose(0,fixed);
+  // B and C start 25 rating points apart. Allow up to half that gap for variety.
+  const tolerance=(startingRatings.get('B')-startingRatings.get('C'))/2;
+  const bestGap=Math.min(...candidates.map(c=>c.gap));
+  const competitive = candidates.filter(c => c.gap <= bestGap + tolerance);
+  const shown = new Map(), options = [];
+  while (competitive.length && options.length < 5) {
+    // Break comparable options in favor of players not already previewed.
+    const exposure = c => c.teams.flat().reduce((n,id) => n + (shown.get(id) || 0), 0);
+    for (const c of competitive) c.exposure = exposure(c);
+    competitive.sort((a,b) => a.partnersCost - b.partnersCost || a.opponentsCost - b.opponentsCost || a.gap - b.gap || a.exposure - b.exposure);
+    const {teams} = competitive.shift();
+    options.push(teams);
+    for (const id of teams.flat()) add(shown,id,1);
+  }
+  return options;
 }
 
 function validateName(input, required) {
@@ -223,11 +240,24 @@ export function applyHost(club, data, now, host) {
 
   const session = club.sessions.find(item => item.id === data.sessionId);
   requireRule(session, 'Sesi tidak ditemukan.', 404);
-  if (action === 'score' || action === 'rejectReport') {
+  if (action === 'deleteMatch') {
+    const index = session.matches.findIndex(item => item.id === data.matchId);
+    const match = session.matches[index];
+    requireRule(match && ['finished', 'unscored'].includes(match.status), 'Hanya laga selesai yang masih tercatat yang bisa dihapus.', 409);
+    requireRule(match.revision === data.revision, 'Data berubah di perangkat lain. Muat ulang lalu coba lagi.', 409);
+    session.matches.splice(index, 1);
+    return;
+  }
+  if (action === 'score' || action === 'rejectReport' || action === 'deleteScore') {
     const match = session.matches.find(item => item.id === data.matchId);
     requireRule(match && ['finished', 'unscored'].includes(match.status), 'Hasil hanya bisa dicatat setelah laga selesai.', 409);
     requireRule(match.revision === data.revision, 'Data berubah di perangkat lain. Muat ulang lalu coba lagi.', 409);
-    if (action === 'rejectReport') {
+    if (action === 'deleteScore') {
+      requireRule(Boolean(match.score), 'Tidak ada skor resmi yang bisa dihapus.', 409);
+      match.audit.push({ previous: match.score, score: null, at: now.toISOString(), host });
+      match.score = null;
+      match.scoreDeleted = true;
+    } else if (action === 'rejectReport') {
       requireRule(!match.score, 'Skor sudah resmi.', 409);
       const report = match.reports.find(item => item.id === data.reportId && item.status === 'pending');
       requireRule(report, 'Usulan sudah diproses.', 409);
@@ -239,6 +269,7 @@ export function applyHost(club, data, now, host) {
       if (!match.score || match.score.some((points, index) => points !== data.score[index])) {
         match.audit.push({ previous: match.score, score: data.score, at: now.toISOString(), host });
         match.score = data.score;
+        delete match.scoreDeleted;
       }
       match.status = 'finished';
       for (const item of match.reports) {
@@ -250,6 +281,21 @@ export function applyHost(club, data, now, host) {
   }
 
   requireRule(!session.closed, 'Sesi sudah ditutup.', 409);
+  if (action === 'activateCourt' || action === 'deactivateCourt') {
+    const court = data.court;
+    requireRule(Number.isInteger(court) && court >= 1 && court <= maxCourts, 'Pilih nomor lapangan antara 1 dan ' + maxCourts + '.');
+    const current = activeCourts(session);
+    if (action === 'activateCourt') {
+      requireRule(!current.includes(court), 'Lapangan ini sudah aktif.', 409);
+      session.activeCourts = [...current, court].sort((a,b) => a-b);
+    } else {
+      requireRule(current.includes(court), 'Lapangan ini sudah nonaktif.', 409);
+      requireRule(!session.matches.some(m => m.court === court && ['active','queued'].includes(m.status)), 'Selesaikan atau batalkan laga di lapangan ini dulu.', 409);
+      session.activeCourts = current.filter(n => n !== court);
+    }
+    session.courts = session.activeCourts.length;
+    return;
+  }
   if (action === 'rescheduleSession') {
     requireRule(!session.matches.some(match => match.startedAt), 'Tanggal terkunci setelah pertandingan pertama dimulai.', 409);
     session.date = validateSessionDate(club, data.date, now, session.id);
@@ -277,7 +323,7 @@ export function applyHost(club, data, now, host) {
     return;
   }
   if (action === 'createMatch') {
-    requireRule(Number.isInteger(data.court) && data.court >= 1 && data.court <= session.courts, 'Lapangan tidak valid.');
+    requireRule(activeCourts(session).includes(data.court), 'Lapangan tidak valid.');
     const { teams } = data;
     requireRule(Array.isArray(teams) && teams.length === 2 && teams.every(team => Array.isArray(team) && team.length === 2), 'Isi dua pemain untuk setiap tim.');
     const players = teams.flat();
@@ -327,7 +373,7 @@ export function lookupMatch(club, code) {
 }
 
 export function canReport(session, match, now) {
-  return !session.closed && session.date === day(now) && isTuesday(session.date) && match.status === 'finished' && !match.score;
+  return !session.closed && session.date === day(now) && isTuesday(session.date) && match.status === 'finished' && !match.score && !match.scoreDeleted;
 }
 
 export function addReport(club, code, data, now) {
@@ -371,20 +417,20 @@ export function clubView(club, now, host = false) {
     ...(sessionPlan ? { sessionDate: sessionPlan.date, sessionMinDate: day(now), suggestedSessionCourts: sessionPlan.courts } : {}),
     signup,
     sessions: club.sessions.slice().reverse().map(session => ({
-      id: session.id, date: session.date, courts: session.courts, closed: session.closed,
+      id: session.id, date: session.date, courts: session.courts, activeCourts: activeCourts(session), closed: session.closed,
       present: Object.values(session.attendance).filter(record => record.status !== 'absent').length,
       ...(host ? {
         attendance: session.attendance, registered: club.signups[session.date] ?? [],
         canReschedule: !session.closed && !session.matches.some(match => match.startedAt),
       } : {}),
-      matches: session.matches.map(match => ({
+      matches: session.matches.filter(match => host || !match.scoreDeleted).map(match => ({
         id: match.id, court: match.court, status: match.status, finishedAt: match.finishedAt,
         teams: match.teams.map(team => team.map(playerId => {
           const player = roster.find(item => item.id === playerId);
           return { id: player.id, display: player.display, tier: player.tier };
         })),
         score: match.score,
-        ...(host ? { revision: match.revision, reports: match.reports, audit: match.audit, reportOpen: canReport(session, match, now) } : {}),
+        ...(host ? { scoreDeleted: Boolean(match.scoreDeleted), revision: match.revision, reports: match.reports, audit: match.audit, reportOpen: canReport(session, match, now) } : {}),
       })),
     })),
   };

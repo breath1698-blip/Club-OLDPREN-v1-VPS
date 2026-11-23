@@ -1,0 +1,13 @@
+http:
+  routers:
+    club-oldpren:
+      rule: Host(`oldpren.techly.id`)
+      entryPoints: [websecure]
+      tls:
+        certResolver: letsencrypt
+      service: club-oldpren
+  services:
+    club-oldpren:
+      loadBalancer:
+        servers:
+          - url: http://club-oldpren:3000

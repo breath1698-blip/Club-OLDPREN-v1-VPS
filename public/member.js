@@ -1,4 +1,4 @@
-import { api, root, layout, nav, hero, esc, page, dateText, dateShort, tiers, tierBadge, tierCaption, empty, teams, matchStatus, badge, scoreText, bindForm, feedback, popup } from './ui.js?v=6';
+import { api, root, layout, memberNav, hero, esc, page, dateText, dateShort, tiers, tierBadge, tierCaption, empty, teams, matchStatus, badge, scoreText, bindForm, feedback, popup } from './ui.js?v=8';
 
 const percent = new Intl.NumberFormat('id-ID', { style: 'percent', maximumFractionDigits: 1 });
 const winRate = player => player.games ? percent.format(player.wins / player.games) : '<span aria-label="Belum ada hasil resmi">–</span>';
@@ -7,7 +7,6 @@ export async function member(path) {
   const endpoint = '/api/club/' + path.split('/')[2];
   let data = await api(endpoint);
   let selectedTier = 'all';
-  const tabs = [['tierlist', 'Tierlist'], ['sesi', 'Sesi Selasa'], ['riwayat', 'Riwayat']];
 
   function signup() {
     const listed = data.players.filter(player => data.signup.playerIds.includes(player.id)).sort((a, b) => a.display.localeCompare(b.display, 'id'));
@@ -67,9 +66,9 @@ export async function member(path) {
     const nicknames = new Map(data.players.map(player => [player.id, player.nickname]));
     return '<section class="member-courts"><div class="section-head"><div><h2>Lapangan</h2><p>' + esc(dateText(session.date)) + '</p></div>' +
       badge(session.courts + ' lapangan · ' + session.present + ' hadir') + '</div><div class="court-grid">' +
-      Array.from({ length: session.courts }, (_, index) => {
-        const matches = session.matches.filter(match => match.court === index + 1 && ['active', 'queued'].includes(match.status));
-        return '<article class="panel member-court"><h3>Lapangan ' + (index + 1) + '</h3>' + (matches.length ? matches.sort((a, b) => a.status.localeCompare(b.status)).map(match => memberMatch(match, nicknames)).join('') : empty('Belum ada pertandingan.')) + '</article>';
+      session.activeCourts.map(court => {
+        const matches = session.matches.filter(match => match.court === court && ['active', 'queued'].includes(match.status));
+        return '<article class="panel member-court"><h3>Lapangan ' + court + '</h3>' + (matches.length ? matches.sort((a, b) => a.status.localeCompare(b.status)).map(match => memberMatch(match, nicknames)).join('') : empty('Belum ada pertandingan.')) + '</article>';
       }).join('') + '</div></section>';
   }
 
@@ -99,7 +98,7 @@ export async function member(path) {
     const body = tab === 'sesi' ? hero('Sesi', 'Selasa', 'Pendaftaran untuk ' + dateText(data.signup.date) + ' (WIB)') + '<div class="stack">' + signup() +
       (current ? courts(current) : '<section class="panel"><h2>Lapangan</h2>' + empty('Host belum membuka sesi.') + '</section>') + '</div>' :
       tab === 'riwayat' ? history() : standings();
-    layout('<div class="member-' + tab + '">' + body + '</div>', nav(tabs, tab), path);
+    layout('<div class="member-' + tab + '">' + body + '</div>', memberNav(tab), path);
     root.querySelectorAll('[data-tier]').forEach(control => control.addEventListener('click', () => {
       selectedTier = control.dataset.tier;
       render();

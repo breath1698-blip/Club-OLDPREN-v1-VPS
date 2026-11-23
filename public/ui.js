@@ -49,8 +49,14 @@ export function layout(contents, navigation = '', brandLink = '/') {
 }
 
 export function nav(items, selected) {
-  return '<nav aria-label="Navigasi utama">' + items.map(([value, title]) =>
-    '<a href="#' + value + '"' + (selected === value ? ' aria-current="page"' : '') + '>' + title + '</a>').join('') + '</nav>';
+  return '<nav aria-label="Navigasi utama">' + items.map(([value, title, href = '#' + value]) =>
+    '<a href="' + esc(href) + '"' + (selected === value ? ' aria-current="page"' : '') + '>' + title + '</a>').join('') + '</nav>';
+}
+
+export function memberNav(selected, fromHost = false) {
+  const items = [['tierlist', 'Tierlist'], ['sesi', 'Sesi Selasa'], ['riwayat', 'Riwayat']]
+    .map(([id, title]) => [id, title, fromHost ? '/?tab=' + id : '#' + id]);
+  return nav([...items, ['host', 'Masuk Host', '/host']], selected);
 }
 
 export function hero(first, last, description, crest = false) {

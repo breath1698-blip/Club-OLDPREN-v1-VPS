@@ -1,0 +1,10 @@
+**
+!package.json
+!package-lock.json
+!domain.mjs
+!server.mjs
+!main.mjs
+!public/
+!public/**
+!test/
+!test/**

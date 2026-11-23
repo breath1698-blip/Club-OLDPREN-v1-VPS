@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, timingSafeEqual, scryptSync, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
-  newClub, RuleError, requireRule, applyHost, addReport, addSignup, suggest,
+  newClub, RuleError, requireRule, applyHost, addReport, addSignup, suggestOptions,
   clubView, reportView, canReport,
 } from './domain.mjs';
 
@@ -214,7 +214,8 @@ export function createApp({ database, groupKey, publicUrl, accounts, allowLocalB
     const club = load();
     const session = club.sessions.find(item => item.id === req.body.sessionId && !item.closed);
     requireRule(session, 'Sesi belum dibuka.', 404);
-    res.json({ teams: suggest(club, session, req.body.locked) });
+    const alternatives = suggestOptions(club, session, req.body.locked);
+    res.json({ teams: alternatives[0], alternatives });
   });
   app.get('/api/host/qr/:matchId{/:format}', hostSession, async (req, res) => {
     const club = load();
@@ -245,7 +246,11 @@ export function createApp({ database, groupKey, publicUrl, accounts, allowLocalB
   });
 
   const shell = (req, res) => res.sendFile(publicFolder + 'index.html');
-  app.get(['/', '/host', '/r/:code'], shell);
+  app.get('/', (req, res) => {
+    const tab = ['tierlist', 'riwayat'].includes(req.query.tab) ? req.query.tab : 'sesi';
+    res.redirect(302, groupPath + '#' + tab);
+  });
+  app.get(['/host', '/r/:code'], shell);
   app.get('/c/:key', checkGroup, shell);
   app.get('/healthz', (req, res) => res.type('text').send('ok'));
   app.use((req, res) => res.status(404).json({ error: 'Halaman tidak ditemukan.' }));
