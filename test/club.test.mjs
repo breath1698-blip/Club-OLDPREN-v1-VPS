@@ -142,6 +142,32 @@ test('host dapat menghapus hanya skor pilihan dari riwayat anggota dan statistik
   assert.deepEqual((await f.members()).value.sessions[0].matches.map(m => m.id), [remove]);
 });
 
+test('hapus laga hanya menghapus satu laga selesai beserta skor, laporan, dan akses QR', async t => {
+  const f = await fixture(t), s = await sessionWithPlayers(f);
+  const keep = await s.create(); await s.start(keep); await s.finish(keep); await s.score(keep, [21, 18]);
+  const remove = await s.create();
+  const payload = { action: 'deleteMatch', sessionId: s.sessionId, matchId: remove, revision: 0 };
+  assert.equal((await f.request('/api/host', payload)).status, 401);
+  assert.equal((await s.act(payload)).status, 409);
+  await s.start(remove); assert.equal((await s.act(payload)).status, 409);
+  await s.finish(remove);
+  const report = await s.reportPath(remove);
+  assert.equal((await f.request(report, { playerId: s.players[0], score: [18, 21] })).status, 201);
+  await s.score(remove, [18, 21]);
+  assert.equal((await s.act(payload)).status, 409);
+  await s.write({ action: 'closeSession', sessionId: s.sessionId });
+  const view = await s.write({ ...payload, revision: 1 });
+  assert.deepEqual(view.sessions[0].matches.map(m => m.id), [keep]);
+  const members = (await f.members()).value;
+  assert.deepEqual(members.sessions[0].matches.map(m => [m.id, m.score]), [[keep, [21, 18]]]);
+  assert.ok(members.players.every(p => p.games === 1));
+  assert.equal((await f.request(report)).status, 404);
+  assert.equal((await s.act({ ...payload, revision: 1 })).status, 409);
+  const hidden = await s.write({ ...payload, action: 'deleteScore', matchId: keep, revision: 1 });
+  const empty = await s.write({ ...payload, matchId: keep, revision: hidden.sessions[0].matches[0].revision });
+  assert.deepEqual(empty.sessions[0].matches, []);
+});
+
 test('host hanya bisa mengganti kredensial sendiri dan perubahan bertahan setelah restart', async t => {
   const folder = mkdtempSync(join(tmpdir(), 'oldpren-auth-'));
   const database = join(folder, 'test.sqlite');

@@ -145,7 +145,8 @@ export async function host() {
             (pending ? '<h4>Usulan pemain</h4><ul class="host-list">' + pending + '</ul>' : '') +
             '<div class="actions">' + (match.reportOpen ? button('Tampilkan QR', 'type="button" data-qr="' + esc(match.id) + '"') : '') +
             button(match.score ? 'Koreksi skor' : 'Isi skor', 'type="button" data-score="' + esc(JSON.stringify(common)) + '"') +
-            (match.score ? actionButton('Hapus skor', { ...common, action: 'deleteScore' }, 'button compact') : '') + '</div>' + audit + '</article>';
+            (match.score ? actionButton('Hapus skor', { ...common, action: 'deleteScore' }, 'button compact') : '') +
+            actionButton('Hapus laga', { ...common, action: 'deleteMatch' }, 'button compact') + '</div>' + audit + '</article>';
         }).join('') + '</div></details>').join('') + '</div>' : '<section class="panel">' + empty('Skor bisa dicatat setelah pertandingan selesai.') + '</section>');
   }
 
@@ -162,7 +163,7 @@ export async function host() {
         if (match.reportOpen) await showQR(match.id);
         else feedback('Laga selesai. Skor bisa diisi dari tab Skor.');
       } else {
-        const captions = { deleteScore: 'Skor dihapus dari Riwayat dan statistik pemain.', score: 'Skor resmi disimpan.', rejectReport: 'Usulan skor ditolak.', addPlayer: 'Pemain ditambahkan.', editPlayer: 'Pemain diperbarui.', removeSignup: 'Nama dikeluarkan dari daftar.', rescheduleSession: 'Tanggal sesi diperbarui.' };
+        const captions = { deleteMatch: 'Laga telah dihapus.', deleteScore: 'Skor dihapus dari Riwayat dan statistik pemain.', score: 'Skor resmi disimpan.', rejectReport: 'Usulan skor ditolak.', addPlayer: 'Pemain ditambahkan.', editPlayer: 'Pemain diperbarui.', removeSignup: 'Nama dikeluarkan dari daftar.', rescheduleSession: 'Tanggal sesi diperbarui.' };
         if (captions[payload.action]) feedback(captions[payload.action]);
         if (payload.action === 'archivePlayer') feedback(payload.archived ? 'Pemain diarsipkan.' : 'Pemain diaktifkan kembali.');
       }
@@ -292,7 +293,7 @@ export async function host() {
     const selected = tabs.some(([id]) => id === page()) ? page() : 'sesi';
     const session = data.sessions.find(item => !item.closed);
     const content = selected === 'akun' ? accountPage() : selected === 'roster' ? roster() : selected === 'skor' ? scores() : sessionPage(session);
-    layout(content, '<div class="host-nav">' + nav(tabs, selected) + button('Keluar', 'type="button" id="logout"', 'button compact') + '</div>', '/host');
+    layout(content, '<div class="host-nav">' + nav([...tabs, ['tierlist', 'Tierlist', '/?tab=tierlist']], selected) + button('Keluar', 'type="button" id="logout"', 'button compact') + '</div>', '/host');
     root.querySelector('#attendance-panel')?.addEventListener('toggle', event => { attendanceOpen = event.currentTarget.open; });
     clipboard('copy-group', data.groupUrl);
     root.querySelector('#logout').addEventListener('click', event => run(event.currentTarget, async () => {
@@ -322,11 +323,13 @@ export async function host() {
     root.querySelectorAll('[data-action]').forEach(control => control.addEventListener('click', () => {
       const payload = JSON.parse(control.dataset.action);
       const questions = { closeSession: 'Tutup sesi ini? QR akan ikut ditutup.', cancelMatch: 'Batalkan pertandingan ini?' };
-      if (payload.action === 'deleteScore') {
+      if (payload.action === 'deleteScore' || payload.action === 'deleteMatch') {
         const chosen = data.sessions.find(s => s.id === payload.sessionId);
         const match = chosen?.matches.find(m => m.id === payload.matchId);
-        if (!match?.score) return;
-        questions.deleteScore = `Hapus skor ${scoreText(match.score)}?\n${dateText(chosen.date)} · Lapangan ${match.court}\n${match.teams.map(team => team.map(p => p.display).join(' & ')).join(' vs ')}\nLaga ini tidak akan tampil di Riwayat anggota dan skornya tidak lagi dihitung dalam tierlist.`;
+        if (!match || (payload.action === 'deleteScore' && !match.score)) return;
+        const fixture = `${dateText(chosen.date)} · Lapangan ${match.court}\n${match.teams.map(team => team.map(p => p.display).join(' & ')).join(' vs ')}`;
+        questions.deleteScore = `Hapus skor ${scoreText(match.score)}?\n${fixture}\nLaga ini tidak akan tampil di Riwayat anggota dan skornya tidak lagi dihitung dalam tierlist.`;
+        questions.deleteMatch = `Hapus laga ini secara permanen?\n${fixture}\nSkor: ${scoreText(match.score)}\nLaga, skor, dan semua laporannya akan dihapus. Tindakan ini tidak dapat dibatalkan.`;
       }
       if (questions[payload.action] && !confirm(questions[payload.action])) return;
       run(control, () => update(payload));

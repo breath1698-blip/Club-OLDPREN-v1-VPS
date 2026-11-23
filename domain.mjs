@@ -240,6 +240,14 @@ export function applyHost(club, data, now, host) {
 
   const session = club.sessions.find(item => item.id === data.sessionId);
   requireRule(session, 'Sesi tidak ditemukan.', 404);
+  if (action === 'deleteMatch') {
+    const index = session.matches.findIndex(item => item.id === data.matchId);
+    const match = session.matches[index];
+    requireRule(match && ['finished', 'unscored'].includes(match.status), 'Hanya laga selesai yang masih tercatat yang bisa dihapus.', 409);
+    requireRule(match.revision === data.revision, 'Data berubah di perangkat lain. Muat ulang lalu coba lagi.', 409);
+    session.matches.splice(index, 1);
+    return;
+  }
   if (action === 'score' || action === 'rejectReport' || action === 'deleteScore') {
     const match = session.matches.find(item => item.id === data.matchId);
     requireRule(match && ['finished', 'unscored'].includes(match.status), 'Hasil hanya bisa dicatat setelah laga selesai.', 409);
