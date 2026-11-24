@@ -82,6 +82,31 @@ export async function member(path) {
         '<section class="panel">' + empty('Belum ada pertandingan yang tercatat.') + '</section>');
   }
 
+  function playerMatchHistory(playerId) {
+    const sessions = data.sessions.map(session => ({
+      date: session.date,
+      matches: session.matches.flatMap(match => {
+        if (!match.score) return [];
+        const side = match.teams.findIndex(team => team.some(player => player.id === playerId));
+        return side < 0 ? [] : [{ match, side }];
+      }).sort((a, b) => b.match.finishedAt.localeCompare(a.match.finishedAt)),
+    })).filter(session => session.matches.length).sort((a, b) => b.date.localeCompare(a.date));
+
+    if (!sessions.length) return empty('Belum ada pertandingan dengan skor resmi.');
+
+    return '<div class="stack">' + sessions.map(({ date, matches }, index) =>
+      '<details class="profile-session"' + (index === 0 ? ' open' : '') + '><summary>' + esc(dateText(date)) + '</summary>' +
+      matches.map(({ match, side }) => {
+        const score = [match.score[side], match.score[1 - side]];
+        const partners = match.teams[side].filter(player => player.id !== playerId).map(player => player.display).join(', ');
+        const opponents = match.teams[1 - side].map(player => player.display).join(', ');
+        return '<article class="match"><div class="actions">' + badge(score[0] > score[1] ? 'Menang' : 'Kalah') +
+          '<strong class="result">' + scoreText(score) + '</strong><span>Lapangan ' + match.court + '</span></div>' +
+          '<p>Partner: ' + esc(partners) + '</p><p>Lawan: ' + esc(opponents) + '</p></article>';
+      }).join('') + '</details>'
+    ).join('') + '</div>';
+  }
+
   function profile(playerId) {
     const player = data.players.find(item => item.id === playerId);
     if (!player) return;
@@ -90,7 +115,8 @@ export async function member(path) {
       empty('Belum ada perubahan tier.');
     popup(player.display, '<div class="profile-tier">' + tierBadge(player.tier) + ' ' + tierCaption(player) + '</div><dl class="stat-row">' +
       '<div><dt>Main</dt><dd>' + player.games + '</dd></div><div><dt>Menang</dt><dd>' + player.wins + '</dd></div><div><dt>Kalah</dt><dd>' + player.losses +
-      '</dd></div><div><dt>Win Rate</dt><dd>' + winRate(player) + '</dd></div></dl><h3>Perubahan tier</h3>' + history);
+      '</dd></div><div><dt>Win Rate</dt><dd>' + winRate(player) + '</dd></div></dl><h3>Perubahan tier</h3>' + history +
+      '<section class="profile-matches"><h3>Riwayat pertandingan</h3>' + playerMatchHistory(playerId) + '</section>');
   }
 
   function render() {
