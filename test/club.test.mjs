@@ -255,17 +255,29 @@ test('anggota mendaftar sendiri sekali per tanggal WIB, host mengonfirmasi hadir
   assert.equal((await f.members()).value.signup.date, '2026-11-24');
   f.setTime('2026-11-23T17:00:00Z');
   const beforeStart = (await f.request('/api/host', undefined, s.cookie)).value;
-  assert.equal(beforeStart.signup.date, '2026-12-01');
+  assert.equal(beforeStart.signup.date, '2026-11-24');
   assert.equal(beforeStart.sessionDate, '2026-11-24');
+  assert.equal((await f.request(path, { ...register, playerId: s.players[1], date: '2026-12-01' })).status, 409);
+  const todaySignup = await f.request(path, { ...register, playerId: s.players[1] });
+  assert.equal(todaySignup.status, 200);
+  assert.deepEqual(todaySignup.value.signup.playerIds, s.players.slice(0, 2));
+  f.setTime(baseDate);
+  const match = await s.create();
+  await s.start(match);
+  const started = (await f.request('/api/host', undefined, s.cookie)).value;
+  assert.equal(started.signup.date, '2026-11-24');
+  assert.deepEqual(started.sessions[0].registered, s.players.slice(0, 2));
+  await s.finish(match);
+  assert.equal((await f.members()).value.signup.date, '2026-11-24');
+  f.setTime('2026-11-24T17:00:00Z'); // Midnight WIB after Tuesday; the session is still open.
+  assert.equal((await f.members()).value.signup.date, '2026-11-24');
+  const closed = await s.write({ action: 'closeSession', sessionId: s.sessionId });
+  assert.equal(closed.signup.date, '2026-12-01');
+  assert.deepEqual(closed.sessions[0].registered, s.players.slice(0, 2));
   assert.equal((await f.request(path, register)).status, 409);
   const nextSignup = await f.request(path, { ...register, playerId: s.players[1], date: '2026-12-01' });
   assert.equal(nextSignup.status, 200);
   assert.deepEqual(nextSignup.value.signup.playerIds, [s.players[1]]);
-  f.setTime(baseDate);
-  await s.start(await s.create());
-  const started = (await f.request('/api/host', undefined, s.cookie)).value;
-  assert.equal(started.signup.date, '2026-12-01');
-  assert.deepEqual(started.sessions[0].registered, [s.players[0]]);
 });
 
 test('QR hanya tersedia setelah laga selesai, laporan bersaing menunggu keputusan host', async t => {
@@ -334,6 +346,9 @@ test('host memilih Selasa yang ditampilkan ke anggota dan bisa menjadwal ulang s
   assert.equal(started.sessions[0].matches[0].status, 'active');
   assert.equal((await s.act(move)).status, 409);
   f.setTime('2026-12-01T11:00:00Z');
+  assert.equal((await f.members()).value.signup.date, '2026-12-01');
+  await s.finish(matchId);
+  await s.write({ action: 'closeSession', sessionId: s.sessionId });
   assert.equal((await f.members()).value.signup.date, '2026-12-08');
 });
 
