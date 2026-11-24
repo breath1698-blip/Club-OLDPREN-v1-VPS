@@ -63,7 +63,6 @@ const legacyStartingRatings = new Map(legacyTiers.map(([tier, minimum], index) =
   return [tier, tier === 'F' ? 1000 : Math.floor((minimum + ceiling) / 2)];
 }));
 const tierOf = rating => legacyTiers[7 - Math.min(7, Math.floor(rating / 500))][0];
-const legacyTierOf = rating => legacyTiers.find(([, minimum]) => rating >= minimum)[0];
 function currentRating(legacyRating) {
   if (legacyRating < 1000) return 250 * Math.exp((legacyRating - 1000) / 15);
   if (legacyRating < 1015) return 250 + (legacyRating - 1000) * 250 / 15;
@@ -86,54 +85,60 @@ function resultPoints(difference, margin, legacy) {
   return (difference < 0 ? 24 : 2) + marginBonus;
 }
 
+export function mvpWinners(entries) {
+  const best = entries.reduce((n, entry) => Math.max(n, entry.gain), 0);
+  return entries.filter(e => e.gain > 0 && best - e.gain <= Math.max(1, best) * 1e-12).map(e => e.name);
+}
+
 export function standings(club, awardMonths = []) {
   const strength = new Map(club.players.map(player => [player.id, {
-    rating: legacyStartingRatings.get(player.initialTier ?? 'F'), usesCalibration: !player.initialTier,
+    rating: currentRating(legacyStartingRatings.get(player.initialTier ?? 'F')), usesCalibration: !player.initialTier,
     games: 0, wins: 0, losses: 0, history: [], monthly: new Map(),
   }]));
   const matches = allMatches(club).filter(match => match.score).sort((left, right) => left.finishOrder - right.finishOrder);
-  let legacy = true;
-  const migrateRatings = () => {
-    for (const player of strength.values()) player.rating = currentRating(player.rating);
-    legacy = false;
-  };
+  // A rolled-back server replays ALL prior results with the old rules. Keep its
+  // scale separately so each unversioned result uses the delta it actually earned.
+  const legacyStrength = new Map(club.players.map(p => [p.id, {rating: legacyStartingRatings.get(p.initialTier ?? 'F')}]));
+  let seenV2 = false;
 
   for (const match of matches) {
-    if (legacy && match.ratingVersion === 2) migrateRatings();
+    const legacy = match.ratingVersion !== 2;
+    if (!legacy) seenV2 = true;
     const winner = Number(match.score[1] > match.score[0]);
     const winnerTeam = match.teams[winner];
     const loserTeam = match.teams[1 - winner];
     const difference = teamAverage(winnerTeam, strength) - teamAverage(loserTeam, strength);
     const margin = Math.abs(match.score[0] - match.score[1]);
-    const change = resultPoints(difference, margin, legacy);
+    const change = resultPoints(difference, margin, false);
+    const oldChange = resultPoints(teamAverage(winnerTeam, legacyStrength) - teamAverage(loserTeam, legacyStrength), margin, true);
     const month = awardMonths.length && match.finishedAt ? day(new Date(match.finishedAt)).slice(0, 7) : null;
     const trackAward = awardMonths.includes(month);
-    const getTier = legacy ? legacyTierOf : tierOf;
-    const ratingForAward = legacy ? currentRating : rating => rating;
 
     match.teams.forEach((team, index) => {
       for (const playerId of team) {
         const player = strength.get(playerId);
         const won = index === winner;
         const calibrating = player.usesCalibration && player.games < 5;
-        const before = getTier(player.rating);
+        const before = tierOf(player.rating);
         const startingRating = player.rating;
-        const adjustment = won ? change * (calibrating ? 3 : 1) : -(calibrating ? Math.ceil(change / 2) : change);
-        player.rating += adjustment;
-        if (!legacy) player.rating = Math.max(0, player.rating);
+        const adjustment = points => won ? points * (calibrating ? 3 : 1) : -(calibrating ? Math.ceil(points / 2) : points);
+        const shadow = legacyStrength.get(playerId);
+        const oldStart = shadow.rating;
+        shadow.rating += adjustment(oldChange);
+        const mappedEnd = currentRating(shadow.rating);
+        player.rating = !seenV2 ? mappedEnd : Math.max(0, startingRating + (legacy ? mappedEnd - currentRating(oldStart) : adjustment(change)));
         if (trackAward) {
-          const gain = ratingForAward(player.rating) - ratingForAward(startingRating);
+          const gain = player.rating - startingRating;
           player.monthly.set(month, (player.monthly.get(month) ?? 0) + gain);
         }
         player.games++;
         if (won) player.wins++;
         else player.losses++;
-        const after = getTier(player.rating);
+        const after = tierOf(player.rating);
         if (before !== after) player.history.push({ date: match.finishedAt, from: before, to: after });
       }
     });
   }
-  if (legacy) migrateRatings();
   return strength;
 }
 
@@ -454,14 +459,9 @@ export function clubView(club, now, host = false) {
   const sessionPlan = host ? courtPlan(club, nextTuesday(club, now)) : undefined;
   return {
     players: host ? roster : ranked,
-    ...(host ? {} : { monthlyMvp: awardMonths.map(month => {
-      const gains = roster.map(player => Math.round(strength.get(player.id).monthly.get(month) ?? 0));
-      const best = Math.max(0, ...gains);
-      return {
-        month,
-        winners: best > 0 ? roster.filter((_, index) => gains[index] === best).map(player => player.display) : [],
-      };
-    }) }),
+    ...(host ? {} : { monthlyMvp: awardMonths.map(month => ({
+      month, winners: mvpWinners(roster.map(player => ({name:player.display, gain:strength.get(player.id).monthly.get(month) ?? 0}))),
+    })) }),
     ...(sessionPlan ? { sessionDate: sessionPlan.date, sessionMinDate: day(now), suggestedSessionCourts: sessionPlan.courts } : {}),
     signup,
     sessions: club.sessions.slice().reverse().map(session => ({
