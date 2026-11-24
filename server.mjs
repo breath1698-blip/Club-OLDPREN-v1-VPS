@@ -247,7 +247,7 @@ export function createApp({ database, groupKey, publicUrl, accounts, allowLocalB
 
   const shell = (req, res) => res.sendFile(publicFolder + 'index.html');
   app.get('/', (req, res) => {
-    const tab = ['tierlist', 'riwayat'].includes(req.query.tab) ? req.query.tab : 'sesi';
+    const tab = ['tierlist', 'riwayat', 'mvp'].includes(req.query.tab) ? req.query.tab : 'sesi';
     res.redirect(302, groupPath + '#' + tab);
   });
   app.get(['/host', '/r/:code'], shell);

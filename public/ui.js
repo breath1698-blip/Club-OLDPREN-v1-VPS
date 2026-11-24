@@ -54,9 +54,9 @@ export function nav(items, selected) {
 }
 
 export function memberNav(selected, fromHost = false) {
-  const items = [['tierlist', 'Tierlist'], ['sesi', 'Sesi Selasa'], ['riwayat', 'Riwayat']]
+  const items = [['tierlist', 'Tierlist'], ['sesi', 'Sesi Selasa'], ['riwayat', 'Riwayat'], ['mvp', 'MVP']]
     .map(([id, title]) => [id, title, fromHost ? '/?tab=' + id : '#' + id]);
-  return nav([...items, ['host', 'Masuk Host', '/host']], selected);
+  return '<div class="member-nav">' + nav([...items, ['host', 'Masuk Host', '/host']], selected) + '</div>';
 }
 
 export function hero(first, last, description, crest = false) {

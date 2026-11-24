@@ -88,6 +88,8 @@ nav a:not([aria-current]):hover { background: var(--background); }
 .board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(225px, 292px); gap: 18px; align-items: start; }
 .panel, .ranking, .match.review { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
 .panel { padding: clamp(15px, 2.5vw, 24px); }
+.mvp-winners { list-style: none; margin: 0; padding: 0; }
+.mvp-winners li { border-top: 1px solid var(--line); padding: 10px 0; font-size: 1.08rem; font-weight: 750; overflow-wrap: anywhere; }
 .tier-tabs { display: grid; grid-template-columns: minmax(62px, 1.4fr) repeat(8, minmax(0, 1fr)); gap: 5px; margin-bottom: 12px; }
 .tier-tabs button {
   min-height: 44px;
@@ -224,6 +226,8 @@ legend { padding-inline: 4px; font-weight: 800; }
   .header-inner { align-items: flex-start; flex-direction: column; gap: 7px; min-height: 0; padding-block: 9px; }
   .brand img { width: 34px; height: 34px; }
   nav a { display: grid; place-items: center; min-height: 38px; padding: 5px 9px; }
+  .member-nav nav { gap: 2px; }
+  .member-nav nav a { padding-inline: 6px; font-size: .76rem; }
   .host-nav { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; width: 100%; }
   .host-nav nav { display: flex; flex-wrap: wrap; gap: 2px; }
   .host-nav nav a { padding-inline: 5px; font-size: .78rem; }

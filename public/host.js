@@ -1,4 +1,4 @@
-import { api, root, layout, nav, memberNav, hero, esc, page, dateText, dateShort, tiers, tierBadge, tierCaption, empty, teams, matchStatus, badge, scoreText, bindForm, feedback, popup, run, clipboard, field, button } from './ui.js?v=8';
+import { api, root, layout, nav, memberNav, hero, esc, page, dateText, dateShort, tiers, tierBadge, tierCaption, empty, teams, matchStatus, badge, scoreText, bindForm, feedback, popup, run, clipboard, field, button } from './ui.js?v=13';
 
 const endpoint = '/api/host';
 const tabs = [['sesi', 'Sesi Selasa'], ['skor', 'Skor'], ['roster', 'Roster'], ['akun', 'Akun']];

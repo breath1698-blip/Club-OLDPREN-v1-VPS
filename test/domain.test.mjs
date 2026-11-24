@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyHost, canReport, day, newClub, nextTuesday, RuleError, suggest, validScore } from '../domain.mjs';
+import { applyHost, canReport, clubView, day, newClub, nextTuesday, RuleError, standings, suggest, validScore } from '../domain.mjs';
 
 const monday = new Date('2026-11-23T16:59:59Z');
 const tuesday = new Date('2026-11-23T17:00:00Z');
@@ -29,6 +29,43 @@ test('skor satu gim menerima hasil yang sah dan menolak skor di luar batas', () 
   ];
   for (const score of accepted) assert.equal(validScore(score), true, JSON.stringify(score));
   for (const score of rejected) assert.equal(validScore(score), false, JSON.stringify(score));
+});
+
+test('skala baru membedakan lawan setara, unggulan dan kejutan sesuai selisih skor', () => {
+  for (const [tierA, tierB, score, expected] of [
+    ['F', 'F', [21, 19], 16],
+    ['SS', 'F', [21, 19], 2],
+    ['SS', 'F', [21, 9], 8],
+    ['F', 'SS', [21, 19], 24],
+    ['F', 'SS', [21, 9], 30],
+  ]) {
+    const { club, match } = queuedMatch();
+    club.players.forEach((player, index) => { player.initialTier = index < 2 ? tierA : tierB; });
+    const before = standings(club);
+    Object.assign(match, { score, finishOrder: 1, ratingVersion: 2 });
+    const after = standings(club);
+    assert.equal(after.get('Ayu').rating - before.get('Ayu').rating, expected);
+    assert.equal(after.get('Citra').rating - before.get('Citra').rating, -expected);
+  }
+});
+
+test('MVP menghitung kenaikan bersih dari tanggal selesai WIB dan berubah saat skor dikoreksi', () => {
+  const { club, session, match } = queuedMatch();
+  Object.assign(match, { score: [21, 9], finishOrder: 1, finishedAt: '2026-11-30T16:59:59Z' });
+  const now = new Date('2026-12-02T03:00:00Z');
+  const initial = clubView(club, now);
+  assert.equal(initial.players.find(player => player.id === 'Ayu').tier, 'E');
+  assert.deepEqual(initial.monthlyMvp, [
+    { month: '2026-12', winners: [] },
+    { month: '2026-11', winners: ['Ayu', 'Bima'] },
+  ]);
+  const next = { ...match, id: 'laga-2', score: [9, 21], finishOrder: 2, finishedAt: '2026-11-30T17:00:00Z', ratingVersion: 2 };
+  session.matches.push(next);
+  assert.deepEqual(clubView(club, now).monthlyMvp[0].winners, ['Citra', 'Dimas']);
+  next.score = [21, 9];
+  assert.deepEqual(clubView(club, now).monthlyMvp[0].winners, ['Ayu', 'Bima']);
+  next.score = null;
+  assert.deepEqual(clubView(club, now).monthlyMvp, initial.monthlyMvp);
 });
 
 test('tanggal berganti tepat tengah malam WIB dan Selasa yang sudah ditutup dilewati', () => {
