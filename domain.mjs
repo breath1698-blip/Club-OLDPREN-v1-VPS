@@ -17,9 +17,8 @@ export function nextTuesday(club, now, includeToday = true) {
 }
 
 function signupTuesday(club, now) {
-  const today = day(now);
-  const scheduled = club.sessions.find(session => !session.closed && session.date > today);
-  return scheduled?.date ?? nextTuesday(club, now, false);
+  const openSession = club.sessions.find(session => !session.closed);
+  return openSession?.date ?? nextTuesday(club, now, false);
 }
 
 function validateSessionDate(club, date, now, sessionId) {
