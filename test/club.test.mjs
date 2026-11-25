@@ -431,6 +431,15 @@ test('host mengunci pemain, bisa antrekan laga lain, dan pemain tidak aktif di d
   await s.finish(next);
   const lastMatch = (await f.members()).value.sessions[0].matches.find(match => match.id === last);
   assert.equal(lastMatch.status, 'queued');
+  const edit = { action: 'editQueuedMatch', sessionId: s.sessionId, matchId: last, revision: 0 };
+  assert.equal((await s.act({ ...edit, matchId: first, teams: s.teams })).status, 409);
+  const replacement = [[s.players[12], s.players[9]], s.players.slice(10, 12)];
+  const updated = await s.write({ ...edit, teams: replacement });
+  assert.deepEqual(updated.sessions[0].matches.map(match => match.id), [first, next, last]);
+  assert.deepEqual(updated.sessions[0].matches.at(-1).teams.map(team => team.map(player => player.id)), replacement);
+  assert.equal((await s.act({ ...edit, teams: replacement })).status, 409);
+  await s.start(last);
+  assert.equal((await s.act({ ...edit, revision: 1, teams: replacement })).status, 409);
   await s.score(first, [9, 4]);
 });
 

@@ -363,16 +363,30 @@ export function applyHost(club, data, now, host) {
     else session.attendance[player.id] = { status: data.status, since: now.toISOString() };
     return;
   }
-  if (action === 'createMatch') {
-    requireRule(activeCourts(session).includes(data.court), 'Lapangan tidak valid.');
+  if (action === 'createMatch' || action === 'editQueuedMatch') {
+    const editing = action === 'editQueuedMatch';
+    const match = editing ? session.matches.find(item => item.id === data.matchId) : null;
+    if (editing) {
+      requireRule(match?.status === 'queued', 'Hanya laga yang masih antre yang bisa diedit.', 409);
+      requireRule(match.revision === data.revision, 'Data berubah di perangkat lain. Muat ulang lalu coba lagi.', 409);
+    }
+    const court = match?.court ?? data.court;
+    requireRule(activeCourts(session).includes(court), 'Lapangan tidak valid.');
     const { teams } = data;
     requireRule(Array.isArray(teams) && teams.length === 2 && teams.every(team => Array.isArray(team) && team.length === 2), 'Isi dua pemain untuk setiap tim.');
     const players = teams.flat();
     const active = activeIds(session);
-    const queued = queuedIds(session);
-    requireRule(new Set(players).size === 4 && players.every(playerId => playerReady(club, session, playerId) && !active.has(playerId) && !queued.has(playerId)), 'Pilih empat pemain siap yang belum terjadwal.', 409);
-    requireRule(courtQueue(session, data.court).length < 2, 'Antrean lapangan penuh (maksimal 2 laga).', 409);
-    session.matches.push({ id: id(), court: data.court, teams, status: 'queued', score: null, audit: [], revision: 0 });
+    const current = new Set(match?.teams.flat());
+    const reserved = new Set(session.matches.filter(item => item !== match && item.status === 'queued').flatMap(item => item.teams.flat()));
+    requireRule(new Set(players).size === 4 && players.every(playerId => !active.has(playerId) && !reserved.has(playerId) &&
+      (current.has(playerId) || playerReady(club, session, playerId))), 'Pemain pengganti harus siap dan belum terjadwal.', 409);
+    if (match) {
+      match.teams = teams;
+      match.revision++;
+    } else {
+      requireRule(courtQueue(session, court).length < 2, 'Antrean lapangan penuh (maksimal 2 laga).', 409);
+      session.matches.push({ id: id(), court, teams, status: 'queued', score: null, audit: [], revision: 0 });
+    }
     return;
   }
 
