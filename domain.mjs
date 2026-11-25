@@ -245,12 +245,14 @@ export function applyHost(club, data, now, host) {
     const name = validateName(data.name, true);
     const nickname = validateName(data.nickname ?? '', false);
     const initialTier = data.initialTier ?? null;
+    const gender = data.gender ?? null;
+    requireRule(gender === null || ['pria', 'wanita'].includes(gender), 'Pilihan gender tidak valid.');
     requireRule(initialTier === null || legacyStartingRatings.has(initialTier), 'Pilihan tier awal tidak valid.');
     const display = label({ name, nickname }).toLocaleLowerCase('id');
     requireRule(!club.players.some(player => player.id !== data.playerId && label(player).toLocaleLowerCase('id') === display), 'Nama tampilan ini sudah ada.', 409);
     if (action === 'addPlayer') {
       requireRule(club.players.length < 1000, 'Roster penuh.');
-      club.players.push({ id: id(), name, nickname, initialTier, archived: false });
+      club.players.push({ id: id(), name, nickname, initialTier, gender, archived: false });
     } else {
       const player = club.players.find(item => item.id === data.playerId);
       requireRule(player, 'Pemain tidak ditemukan.', 404);
@@ -260,6 +262,7 @@ export function applyHost(club, data, now, host) {
         player.initialTier = initialTier;
       }
       Object.assign(player, { name, nickname });
+      if (data.gender !== undefined) player.gender = gender;
     }
     return;
   }
@@ -440,7 +443,7 @@ export function clubView(club, now, host = false) {
       id: player.id, name: player.name, nickname: player.nickname, display: label(player), archived: player.archived,
       tier: tierOf(stats.rating), calibration: stats.usesCalibration ? Math.min(5, stats.games) : null, games: stats.games,
       wins: stats.wins, losses: stats.losses, history: stats.history,
-      ...(host ? { initialTier: player.initialTier ?? null } : {}),
+      ...(host ? { initialTier: player.initialTier ?? null, gender: player.gender ?? null } : {}),
     };
   });
   const active = roster.filter(player => !player.archived);

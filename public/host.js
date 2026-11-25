@@ -3,6 +3,16 @@ import { api, root, layout, nav, memberNav, hero, esc, page, dateText, dateShort
 const endpoint = '/api/host';
 const tabs = [['sesi', 'Sesi Selasa'], ['skor', 'Skor'], ['roster', 'Roster'], ['akun', 'Akun']];
 const attendanceLabels = { absent: 'Belum hadir', ready: 'Siap main', rest: 'Istirahat', left: 'Sudah pulang' };
+const genderLabels = { pria: 'Laki-laki', wanita: 'Perempuan' };
+const genderShapes = {
+  pria: 'M8 6h8a2 2 0 0 1 2 2v6h-2V9h-1v13h-2v-7h-2v7H9V9H8v5H6V8a2 2 0 0 1 2-2Z',
+  wanita: 'M9 6h6l3 7-1.8.8L14.5 10l2 7H14v5h-2v-5h-1v5H9v-5H7.5l2-7-1.7 3.8L6 13Z',
+};
+function genderIcon(gender) {
+  return Object.hasOwn(genderShapes, gender) ?
+    '<svg class="gender-icon gender-' + gender + '" viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="' +
+    genderLabels[gender] + '"><title>' + genderLabels[gender] + '</title><circle cx="12" cy="3" r="2"/><path d="' + genderShapes[gender] + '"/></svg>' : '';
+}
 const actionButton = (label, payload, style = 'button') =>
   button(label, 'type="button" data-action="' + esc(JSON.stringify(payload)) + '"', style);
 const needsScore = match => ['finished', 'unscored'].includes(match.status) && !match.score && !match.scoreDeleted;
@@ -37,7 +47,8 @@ export async function host() {
       '<div class="panel roster-panel"><div class="section-head"><h2>Daftar pemain</h2>' +
       badge(data.players.filter(player => !player.archived).length + ' aktif') + '</div>' +
       (data.players.length ? '<ul class="roster-list">' + data.players.map(player =>
-        '<li><div><strong>' + esc(player.display) + '</strong><small>' + (player.archived ? 'Diarsipkan' : tierCaption(player)) + '</small></div>' +
+        '<li><div><strong class="roster-name"><span>' + esc(player.display) + '</span>' + genderIcon(player.gender) +
+        '</strong><small>' + (player.archived ? 'Diarsipkan' : tierCaption(player)) + '</small></div>' +
         tierBadge(player.tier) + button('Edit', 'type="button" data-edit="' + esc(player.id) + '"', 'button compact roster-edit') + '</li>').join('') +
         '</ul>' : empty('Tambahkan nama pemain untuk mulai mengisi roster.')) + '</div></section>';
   }
@@ -197,11 +208,16 @@ export async function host() {
     const dialog = popup(title, '<form id="player-form" class="stack">' +
       field('name', 'Nama lengkap', 'maxlength="100" required value="' + esc(player?.name) + '"') +
       field('nickname', 'Nama panggilan (opsional)', 'maxlength="50" value="' + esc(player?.nickname) + '"') +
+      '<label>Gender (opsional)<select name="gender"><option value="">Belum diisi</option>' +
+      Object.entries(genderLabels).map(([value, label]) => '<option value="' + value + '"' +
+        (value === player?.gender ? ' selected' : '') + '>' + label + '</option>').join('') + '</select></label>' +
       (player?.games ? '<p class="muted">Tier awal terkunci setelah skor resmi pertama.</p>' : initialTierField(player?.initialTier)) +
       '<button class="button solid full">' + (player ? 'Simpan pemain' : title) + '</button></form>' +
       (player ? button(player.archived ? 'Aktifkan kembali' : 'Arsipkan pemain', 'type="button" id="archive-player"', 'quiet roster-archive') : ''));
     bindForm('player-form', form => {
       const changes = { action: player ? 'editPlayer' : 'addPlayer', playerId: player?.id, name: form.get('name'), nickname: form.get('nickname') };
+      const gender = form.get('gender') || null;
+      if (gender !== (player?.gender ?? null)) changes.gender = gender;
       const tier = form.get('initialTier') || null;
       if (form.has('initialTier') && tier !== (player?.initialTier ?? null)) changes.initialTier = tier;
       return update(changes, dialog);

@@ -167,6 +167,10 @@ select { max-width: 100%; }
 .roster-list { list-style: none; margin: 0; padding: 0; }
 .roster-list li { display: grid; grid-template-columns: minmax(0, 1fr) 32px auto; align-items: center; gap: 9px; padding-block: 10px; border-top: 1px solid var(--line); }
 .roster-list strong { display: block; font-size: .9rem; line-height: 1.38; overflow-wrap: anywhere; }
+.roster-list .roster-name { display: flex; align-items: flex-start; gap: 4px; }
+.gender-icon { flex: 0 0 16px; height: 16px; margin-top: 1px; }
+.gender-pria { color: #1764b0; }
+.gender-wanita { color: #be356d; }
 .roster-list small { display: block; margin-top: 2px; }
 .roster-edit { min-width: 48px; min-height: 40px; }
 .roster-archive { width: 100%; min-height: 42px; margin-top: 8px; color: var(--muted); font-size: .84rem; font-weight: 700; }

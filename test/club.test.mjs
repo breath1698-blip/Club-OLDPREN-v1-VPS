@@ -62,6 +62,23 @@ test('tautan anggota hanya bisa baca, tanpa akses host atau rating internal', as
   assert.equal((await request('/api/host', { action: 'addPlayer', name: 'Nama lain' }, cookie, { Origin: 'https://other.example' })).status, 403);
 });
 
+test('gender pemain opsional, bisa diubah host, dan bersifat privat di API anggota', async t => {
+  const { request, login, members } = await fixture(t);
+  const cookie = await login();
+  const add = { action: 'addPlayer', name: 'Ayu Contoh', gender: 'wanita' };
+  assert.equal((await request('/api/host', add)).status, 401);
+  assert.equal((await request('/api/host', { ...add, gender: 'invalid' }, cookie)).status, 400);
+  const created = await request('/api/host', add, cookie);
+  assert.equal(created.status, 200);
+  const [player] = created.value.players;
+  assert.equal(player.gender, 'wanita');
+  assert.equal(Object.hasOwn((await members()).value.players[0], 'gender'), false);
+  const edit = { action: 'editPlayer', playerId: player.id, name: player.name };
+  assert.equal((await request('/api/host', edit, cookie)).value.players[0].gender, 'wanita');
+  assert.equal((await request('/api/host', { ...edit, gender: 'pria' }, cookie)).value.players[0].gender, 'pria');
+  assert.equal((await request('/api/host', { ...edit, gender: null }, cookie)).value.players[0].gender, null);
+});
+
 
 
 async function sessionWithPlayers(f, count = 4, date) {
