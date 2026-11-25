@@ -160,6 +160,13 @@ select { max-width: 100%; }
 .host-list .compact-label { min-width: 110px; }
 .host-list select { min-height: 36px; padding: 4px 6px; }
 .host-list .actions { flex: 0 0 auto; }
+.host-list li[hidden] { display: none; }
+.attendance-check { display: flex; align-items: center; gap: 7px; min-height: 38px; }
+.attendance-check input { width: 17px; height: 17px; min-height: 0; margin: 0; accent-color: var(--navy); }
+.attendance-person { display: flex; align-items: center; gap: 8px; }
+.attendance-person > div { min-width: 0; }
+.attendance-bulk { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.attendance-bulk label { margin-bottom: 4px; }
 .roster-page { max-width: 760px; margin-inline: auto; }
 .roster-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 .roster-heading h1 { font-size: clamp(1.42rem, 4.8vw, 2.1rem); line-height: 1.15; letter-spacing: -.045em; }

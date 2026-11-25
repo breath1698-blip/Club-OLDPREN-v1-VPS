@@ -125,6 +125,7 @@ export function createApp({ database, groupKey, publicUrl, accounts, allowLocalB
     res.set('Cache-Control', 'no-store');
     next();
   });
+  app.use('/api/host', express.json({ limit: '48kb' }));
   app.use('/api', express.json({ limit: '8kb' }));
   app.use('/api', (req, res, next) => {
     if (req.method === 'POST') {

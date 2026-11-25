@@ -423,6 +423,20 @@ test('host masih bisa mengisi skor setelah menutup sesi', async t => {
   assert.deepEqual((await f.members()).value.sessions[0].matches[0].score, [22, 20]);
 });
 
+test('host mengubah status beberapa pemain sekaligus dan tidak menyimpan sebagian jika ada id tidak valid', async t => {
+  const f = await fixture(t), s = await sessionWithPlayers(f);
+  const playerIds = s.players.slice(0, 2);
+  const payload = { action: 'bulkAttendance', sessionId: s.sessionId, playerIds, status: 'rest' };
+  assert.equal((await f.request('/api/host', payload)).status, 401);
+  assert.equal((await s.act({ ...payload, playerIds: [playerIds[0], 'tidak-ada'] })).status, 404);
+  const unchanged = await f.request('/api/host', undefined, s.cookie);
+  assert.equal(unchanged.value.sessions[0].attendance[playerIds[0]].status, 'ready');
+  const updated = await s.write(payload);
+  const attendance = updated.sessions[0].attendance;
+  assert.deepEqual(playerIds.map(id => attendance[id].status), ['rest', 'rest']);
+  assert.equal(attendance[s.players[2]].status, 'ready');
+});
+
 test('host mengunci pemain, bisa antrekan laga lain, dan pemain tidak aktif di dua lapangan', async t => {
   const f = await fixture(t);
   const s = await sessionWithPlayers(f, 16);

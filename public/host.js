@@ -33,6 +33,9 @@ function initialTierField(selected = null) {
 export async function host() {
   let data;
   let attendanceOpen = !matchMedia('(max-width: 660px)').matches;
+  let attendanceQuery = '';
+  let attendanceSessionId;
+  const selectedAttendance = new Set();
   try { data = await api(endpoint); }
   catch (error) { if (error.status !== 401) throw error; }
 
@@ -66,9 +69,16 @@ export async function host() {
     const signups = session.registered;
     return '<details class="panel" id="attendance-panel"' + (attendanceOpen ? ' open' : '') +
       '><summary>Kehadiran pemain <span class="muted">(' + session.present + ' hadir)</span></summary>' +
-      (players.length ? '<ul class="host-list">' + players.map(player => {
+      (players.length ? field('search-attendance', 'Cari pemain', 'type="search" placeholder="Nama atau panggilan" value="' + esc(attendanceQuery) + '" autocomplete="off"') +
+        '<label class="attendance-check"><input type="checkbox" id="select-visible-attendance">Pilih semua hasil</label>' +
+        '<form id="bulk-attendance" class="attendance-bulk"><div><label for="bulk-attendance-status">Status pilihan</label>' +
+        '<select id="bulk-attendance-status" name="status" required><option value="">Pilih status</option>' + statusOption() + '</select></div>' +
+        '<button class="button solid" disabled>Terapkan (0)</button></form>' +
+        '<p class="empty" id="no-attendance-results" hidden>Tidak ada pemain yang cocok.</p><ul class="host-list">' + players.map(player => {
         const status = session.attendance[player.id]?.status || 'absent';
-        return '<li><div><strong>' + esc(player.display) + '</strong>' + (signups.includes(player.id) ? '<small>Sudah daftar main</small>' : '') + '</div>' +
+        return '<li data-attendance-name="' + esc(player.display) + '"><div class="attendance-person"><label class="attendance-check">' +
+          '<input type="checkbox" data-attendance-select="' + esc(player.id) + '"><span class="sr">Pilih ' + esc(player.display) + '</span></label>' +
+          '<div><strong>' + esc(player.display) + '</strong>' + (signups.includes(player.id) ? '<small>Sudah daftar main</small>' : '') + '</div></div>' +
           tierBadge(player.tier) + '<label class="compact-label"><span class="sr">Kehadiran ' + esc(player.display) + '</span><select data-attendance="' + esc(player.id) +
           '">' + statusOption(status) + '</select></label></li>';
       }).join('') + '</ul>' : empty('Tambahkan pemain dari tab Roster.')) + '</details>';
@@ -180,6 +190,7 @@ export async function host() {
     busy = true;
     try {
       data = await api(endpoint, payload);
+      if (payload.action === 'bulkAttendance') selectedAttendance.clear();
       dialog?.close();
       render();
       if (payload.action === 'finishMatch') {
@@ -190,6 +201,7 @@ export async function host() {
       } else {
         const captions = { deleteMatch: 'Laga telah dihapus.', deleteScore: 'Skor dihapus dari Riwayat dan statistik pemain.', score: 'Skor resmi disimpan.', addPlayer: 'Pemain ditambahkan.', editPlayer: 'Pemain diperbarui.', editQueuedMatch: 'Susunan antrean diperbarui.', removeSignup: 'Nama dikeluarkan dari daftar.', rescheduleSession: 'Tanggal sesi diperbarui.' };
         if (captions[payload.action]) feedback(captions[payload.action]);
+        if (payload.action === 'bulkAttendance') feedback('Status ' + payload.playerIds.length + ' pemain diperbarui.');
         if (payload.action === 'archivePlayer') feedback(payload.archived ? 'Pemain diarsipkan.' : 'Pemain diaktifkan kembali.');
       }
     } catch (error) {
@@ -337,9 +349,62 @@ export async function host() {
     }
     const selected = tabs.some(([id]) => id === page()) ? page() : 'sesi';
     const session = data.sessions.find(item => !item.closed);
+    if (attendanceSessionId !== session?.id) {
+      attendanceSessionId = session?.id;
+      attendanceQuery = '';
+      selectedAttendance.clear();
+    }
     const content = selected === 'akun' ? accountPage() : selected === 'roster' ? roster() : selected === 'skor' ? scores() : sessionPage(session);
     layout(content, '<div class="host-nav">' + nav([...tabs, ['tierlist', 'Tierlist', '/?tab=tierlist']], selected) + button('Keluar', 'type="button" id="logout"', 'button compact') + '</div>', '/host');
     root.querySelector('#attendance-panel')?.addEventListener('toggle', event => { attendanceOpen = event.currentTarget.open; });
+    const attendanceSearch = root.querySelector('[name="search-attendance"]');
+    if (attendanceSearch) {
+      const rows = [...root.querySelectorAll('[data-attendance-name]')];
+      const noResults = root.querySelector('#no-attendance-results');
+      const checks = rows.map(row => row.querySelector('[data-attendance-select]'));
+      const selectVisible = root.querySelector('#select-visible-attendance');
+      const apply = root.querySelector('#bulk-attendance button');
+      const knownIds = new Set(checks.map(check => check.dataset.attendanceSelect));
+      for (const id of selectedAttendance) {
+        if (!knownIds.has(id)) selectedAttendance.delete(id);
+      }
+      const visibleChecks = () => checks.filter((_, index) => !rows[index].hidden);
+      function syncChecks() {
+        for (const check of checks) check.checked = selectedAttendance.has(check.dataset.attendanceSelect);
+        const visible = visibleChecks();
+        const checked = visible.filter(check => check.checked).length;
+        selectVisible.checked = visible.length > 0 && checked === visible.length;
+        selectVisible.indeterminate = checked > 0 && checked < visible.length;
+        selectVisible.disabled = visible.length === 0;
+        apply.disabled = selectedAttendance.size === 0;
+        apply.textContent = 'Terapkan (' + selectedAttendance.size + ')';
+      }
+      function selectCheck(check, checked) {
+        const id = check.dataset.attendanceSelect;
+        if (checked) selectedAttendance.add(id);
+        else selectedAttendance.delete(id);
+      }
+      const filterAttendance = () => {
+        attendanceQuery = attendanceSearch.value;
+        const query = attendanceQuery.trim().toLocaleLowerCase('id');
+        for (const row of rows) row.hidden = !row.dataset.attendanceName.toLocaleLowerCase('id').includes(query);
+        noResults.hidden = rows.some(row => !row.hidden);
+        syncChecks();
+      };
+      for (const check of checks) check.addEventListener('change', () => {
+        selectCheck(check, check.checked);
+        syncChecks();
+      });
+      selectVisible.addEventListener('change', () => {
+        for (const check of visibleChecks()) selectCheck(check, selectVisible.checked);
+        syncChecks();
+      });
+      attendanceSearch.addEventListener('input', filterAttendance);
+      filterAttendance();
+    }
+    bindForm('bulk-attendance', form => update({
+      action: 'bulkAttendance', sessionId: session.id, playerIds: [...selectedAttendance], status: form.get('status'),
+    }));
     clipboard('copy-group', data.groupUrl);
     root.querySelector('#logout').addEventListener('click', event => run(event.currentTarget, async () => {
       await api(endpoint + '/logout', {});
@@ -396,10 +461,10 @@ export async function host() {
   render();
   addEventListener('hashchange', render);
   setInterval(async () => {
-    if (!data || document.hidden || busy || !['sesi', 'skor', ''].includes(page()) || document.querySelector('dialog') || root.querySelector('form :focus, select:focus')) return;
+    if (!data || document.hidden || busy || !['sesi', 'skor', ''].includes(page()) || document.querySelector('dialog') || root.querySelector('form :focus, #attendance-panel :focus')) return;
     try {
       const updated = await api(endpoint);
-      if (!busy && JSON.stringify(updated) !== JSON.stringify(data) && !document.querySelector('dialog') && !root.querySelector('form :focus, select:focus')) {
+      if (!busy && JSON.stringify(updated) !== JSON.stringify(data) && !document.querySelector('dialog') && !root.querySelector('form :focus, #attendance-panel :focus')) {
         data = updated;
         render();
       }

@@ -356,14 +356,19 @@ export function applyHost(club, data, now, host) {
     }
     return;
   }
-  if (action === 'attendance') {
-    const player = club.players.find(item => item.id === data.playerId && !item.archived);
-    requireRule(player, 'Pemain aktif tidak ditemukan.', 404);
+  if (action === 'attendance' || action === 'bulkAttendance') {
+    const ids = action === 'attendance' ? [data.playerId] : data.playerIds;
+    requireRule(Array.isArray(ids) && ids.length > 0 && ids.length <= 1000 &&
+      ids.every(playerId => typeof playerId === 'string') && new Set(ids).size === ids.length, 'Pilih pemain yang valid.');
+    const activePlayers = new Set(club.players.filter(player => !player.archived).map(player => player.id));
+    requireRule(ids.every(playerId => activePlayers.has(playerId)), 'Pemain aktif tidak ditemukan.', 404);
     requireRule(['ready', 'rest', 'left', 'absent'].includes(data.status), 'Status kehadiran tidak valid.');
-    const current = session.attendance[player.id];
-    if (current?.status === data.status || (!current && data.status === 'absent')) return;
-    if (data.status === 'absent') delete session.attendance[player.id];
-    else session.attendance[player.id] = { status: data.status, since: now.toISOString() };
+    const since = now.toISOString();
+    for (const playerId of ids) {
+      if (session.attendance[playerId]?.status === data.status) continue;
+      if (data.status === 'absent') delete session.attendance[playerId];
+      else session.attendance[playerId] = { status: data.status, since };
+    }
     return;
   }
   if (action === 'createMatch' || action === 'editQueuedMatch') {
