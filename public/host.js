@@ -5,6 +5,14 @@ const tabs = [['sesi', 'Sesi Selasa'], ['skor', 'Skor'], ['roster', 'Roster'], [
 const attendanceLabels = { absent: 'Belum hadir', ready: 'Siap main', rest: 'Istirahat', left: 'Sudah pulang' };
 const actionButton = (label, payload, style = 'button') =>
   button(label, 'type="button" data-action="' + esc(JSON.stringify(payload)) + '"', style);
+const needsScore = match => ['finished', 'unscored'].includes(match.status) && !match.score && !match.scoreDeleted;
+function sessionGames(session) {
+  const counts = new Map();
+  for (const match of session.matches.filter(match => ['finished', 'unscored'].includes(match.status))) {
+    for (const player of match.teams.flat()) counts.set(player.id, (counts.get(player.id) ?? 0) + 1);
+  }
+  return counts;
+}
 
 function initialTierField(selected = null) {
   const options = tiers.slice().reverse().map(tier => '<option value="' + tier + '"' +
@@ -55,24 +63,29 @@ export async function host() {
       }).join('') + '</ul>' : empty('Tambahkan pemain dari tab Roster.')) + '</details>';
   }
 
-  function courtMatch(session, match, nicknames) {
+  function courtMatch(session, match, nicknames, queuePosition, canStart) {
     const common = { sessionId: session.id, matchId: match.id };
-    return '<section class="match"><div class="section-head">' + badge(matchStatus[match.status]) + '</div>' + teams(match, { withTier: true, nicknames }) +
+    return '<section class="match"><div class="section-head">' + badge(queuePosition ? 'Antrean ' + queuePosition : matchStatus[match.status]) + '</div>' + teams(match, { withTier: true, nicknames }) +
       '<div class="actions">' +
-      (match.status === 'queued' ? actionButton('Mulai laga', { ...common, action: 'startMatch' }, 'button solid compact') :
-        actionButton('Selesaikan laga', { ...common, action: 'finishMatch' }, 'button solid compact')) +
+      (match.status === 'active' ? actionButton('Selesaikan laga', { ...common, action: 'finishMatch' }, 'button solid compact') :
+        canStart ? actionButton('Mulai laga', { ...common, action: 'startMatch' }, 'button solid compact') : '') +
       actionButton('Batalkan', { ...common, action: 'cancelMatch' }, 'button compact') + '</div></section>';
   }
 
   function courts(session) {
-    const nicknames = new Map(data.players.map(player => [player.id, player.nickname]));
-    return '<section><div class="section-head"><h2>Lapangan (' + session.courts + ')</h2><div class="actions"><button type="button" class="button compact" id="manage-courts">Kelola Lapangan</button><a class="button compact" href="#skor">Kelola skor</a></div></div>' +
+    const played = sessionGames(session);
+    const nicknames = new Map(data.players.map(player => [
+      player.id, (player.nickname || player.name) + ' · ' + (played.get(player.id) ?? 0) + 'x main',
+    ]));
+    const pendingCount = data.sessions.reduce((count, item) => count + item.matches.filter(needsScore).length, 0);
+    return '<section><div class="section-head"><h2>Lapangan (' + session.courts + ')</h2><div class="actions"><button type="button" class="button compact" id="manage-courts">Kelola Lapangan</button><a class="button compact" href="#skor">Skor belum diisi (' + pendingCount + ')</a></div></div>' +
       (!session.courts ? empty('Belum ada lapangan aktif.') : '') + '<div class="court-grid">' + session.activeCourts.map(court => {
-        const matches = session.matches.filter(match => match.court === court && ['active', 'queued'].includes(match.status))
-          .sort((a, b) => a.status.localeCompare(b.status));
+        const active = session.matches.find(match => match.court === court && match.status === 'active');
+        const queue = session.matches.filter(match => match.court === court && match.status === 'queued');
         return '<article class="panel court"><h3>Lapangan ' + court + '</h3>' +
-          (matches.length ? matches.map(match => courtMatch(session, match, nicknames)).join('') : empty('Lapangan kosong.')) +
-          (!matches.some(match => match.status === 'queued') ? button('Susun laga', 'type="button" data-court="' + court + '"', 'button full') : '') + '</article>';
+          (active ? courtMatch(session, active, nicknames, 0, false) : empty('Lapangan kosong.')) +
+          (queue.length ? '<h4>Antrean (' + queue.length + '/2)</h4>' + queue.map((match, index) => courtMatch(session, match, nicknames, index + 1, !active && index === 0)).join('') : '') +
+          (queue.length < 2 ? button('Susun laga', 'type="button" data-court="' + court + '"', 'button full') : '') + '</article>';
       }).join('') + '</div></section>';
   }
 
@@ -123,31 +136,28 @@ export async function host() {
   }
 
   function scores() {
-    const sessions = data.sessions.filter(session => session.matches.some(match => ['finished', 'unscored'].includes(match.status)));
-    return hero('Kelola', 'Skor', 'Periksa laporan pemain sebelum hasil masuk tierlist.') +
-      (sessions.length ? '<div class="stack">' + sessions.map((session, index) =>
-        '<details class="panel"' + (index === 0 ? ' open' : '') + '><summary>' + esc(dateText(session.date)) + '</summary><div class="court-grid">' +
-        session.matches.filter(match => ['finished', 'unscored'].includes(match.status)).slice().reverse().sort((a, b) => Number(Boolean(a.score)) - Number(Boolean(b.score))).map(match => {
-          const common = { sessionId: session.id, matchId: match.id, revision: match.revision };
-          const reports = match.reports.filter(report => report.status === 'pending');
-          const pending = reports.map(report => {
-            const name = match.teams.flat().find(player => player.id === report.playerId).display;
-            return '<li><div><strong>' + scoreText(report.score) + '</strong><small>' + esc(name) + '</small></div><div class="actions">' +
-              actionButton('Tolak', { ...common, action: 'rejectReport', reportId: report.id }, 'button compact') +
-              actionButton('Sahkan', { ...common, action: 'score', score: report.score, reportId: report.id }, 'button solid compact') + '</div></li>';
-          }).join('');
-          const audit = match.audit.length ? '<details class="audit"><summary>Riwayat pengesahan</summary><ul class="history">' +
-            match.audit.slice().reverse().map(row => '<li><time>' + esc(dateShort(row.at)) + '</time><span>' + esc(row.host) + ' · ' +
-              (row.previous ? scoreText(row.previous) + ' → ' : '') + (row.score ? scoreText(row.score) : 'Skor dihapus') + '</span></li>').join('') + '</ul></details>' : '';
-          return '<article class="match review"><div class="section-head"><h3>Lapangan ' + match.court + '</h3>' +
-            badge(match.scoreDeleted ? 'Skor dihapus' : match.score ? 'Skor resmi' : matchStatus[match.status]) + '</div>' + teams(match) +
-            (match.score ? '<p class="result">' + scoreText(match.score) + '</p>' : '') +
-            (pending ? '<h4>Usulan pemain</h4><ul class="host-list">' + pending + '</ul>' : '') +
-            '<div class="actions">' + (match.reportOpen ? button('Tampilkan QR', 'type="button" data-qr="' + esc(match.id) + '"') : '') +
-            button(match.score ? 'Koreksi skor' : 'Isi skor', 'type="button" data-score="' + esc(JSON.stringify(common)) + '"') +
-            (match.score ? actionButton('Hapus skor', { ...common, action: 'deleteScore' }, 'button compact') : '') +
-            actionButton('Hapus laga', { ...common, action: 'deleteMatch' }, 'button compact') + '</div>' + audit + '</article>';
-        }).join('') + '</div></details>').join('') + '</div>' : '<section class="panel">' + empty('Skor bisa dicatat setelah pertandingan selesai.') + '</section>');
+    function card(session, match) {
+      const common = { sessionId: session.id, matchId: match.id, revision: match.revision };
+      const audit = match.audit.length ? '<details class="audit"><summary>Riwayat pengesahan</summary><ul class="history">' +
+        match.audit.slice().reverse().map(row => '<li><time>' + esc(dateShort(row.at)) + '</time><span>' + esc(row.host) + ' · ' +
+          (row.previous ? scoreText(row.previous) + ' → ' : '') + (row.score ? scoreText(row.score) : 'Skor dihapus') + '</span></li>').join('') + '</ul></details>' : '';
+      return '<article class="match review"><div class="section-head"><div><h3>Lapangan ' + match.court + '</h3><p>' + esc(dateShort(session.date)) + '</p></div>' +
+        badge(match.scoreDeleted ? 'Skor dihapus' : match.score ? 'Skor resmi' : matchStatus[match.status]) + '</div>' + teams(match) +
+        (match.score ? '<p class="result">' + scoreText(match.score) + '</p>' : '') +
+        '<div class="actions">' +
+        button(match.score ? 'Koreksi skor' : 'Isi skor', 'type="button" data-score="' + esc(JSON.stringify(common)) + '"') +
+        (match.score ? actionButton('Hapus skor', { ...common, action: 'deleteScore' }, 'button compact') : '') +
+        actionButton('Hapus laga', { ...common, action: 'deleteMatch' }, 'button compact') + '</div>' + audit + '</article>';
+    }
+    const pending = data.sessions.flatMap(session => session.matches.filter(needsScore).reverse().map(match => card(session, match)));
+    const history = data.sessions.map(session => {
+      const matches = session.matches.filter(match => ['finished', 'unscored'].includes(match.status) && !needsScore(match));
+      return matches.length ? '<details class="panel"><summary>' + esc(dateText(session.date)) + '</summary><div class="court-grid">' +
+        matches.reverse().map(match => card(session, match)).join('') + '</div></details>' : '';
+    }).join('');
+    return hero('Kelola', 'Skor', '') + '<div class="stack"><section><h2>Skor belum diisi (' + pending.length + ')</h2>' +
+      (pending.length ? '<div class="court-grid">' + pending.join('') + '</div>' : empty('Semua skor sudah dibereskan.')) +
+      '</section>' + (history ? '<h2>Riwayat pengisian skor</h2>' + history : '') + '</div>';
   }
 
   let busy = false;
@@ -159,11 +169,12 @@ export async function host() {
       dialog?.close();
       render();
       if (payload.action === 'finishMatch') {
-        const match = data.sessions.find(item => item.id === payload.sessionId).matches.find(item => item.id === payload.matchId);
-        if (match.reportOpen) await showQR(match.id);
-        else feedback('Laga selesai. Skor bisa diisi dari tab Skor.');
+        const session = data.sessions.find(item => item.id === payload.sessionId);
+        const match = session.matches.find(item => item.id === payload.matchId);
+        const next = session.matches.some(item => item.court === match.court && item.status === 'active');
+        feedback((next ? 'Laga berikutnya dimulai. ' : 'Laga selesai. ') + 'Skor bisa diisi belakangan.');
       } else {
-        const captions = { deleteMatch: 'Laga telah dihapus.', deleteScore: 'Skor dihapus dari Riwayat dan statistik pemain.', score: 'Skor resmi disimpan.', rejectReport: 'Usulan skor ditolak.', addPlayer: 'Pemain ditambahkan.', editPlayer: 'Pemain diperbarui.', removeSignup: 'Nama dikeluarkan dari daftar.', rescheduleSession: 'Tanggal sesi diperbarui.' };
+        const captions = { deleteMatch: 'Laga telah dihapus.', deleteScore: 'Skor dihapus dari Riwayat dan statistik pemain.', score: 'Skor resmi disimpan.', addPlayer: 'Pemain ditambahkan.', editPlayer: 'Pemain diperbarui.', removeSignup: 'Nama dikeluarkan dari daftar.', rescheduleSession: 'Tanggal sesi diperbarui.' };
         if (captions[payload.action]) feedback(captions[payload.action]);
         if (payload.action === 'archivePlayer') feedback(payload.archived ? 'Pemain diarsipkan.' : 'Pemain diaktifkan kembali.');
       }
@@ -203,21 +214,31 @@ export async function host() {
       feedback('Butuh empat pemain siap yang belum terjadwal.', true);
       return;
     }
-    const playerOptions = choices.map(player => '<option value="' + esc(player.id) + '">' + esc(player.display) + ' · ' + player.tier + '</option>').join('');
+    const played = sessionGames(session);
     const select = index => '<select aria-label="Pemain ' + (index % 2 + 1) + ' Tim ' + (index < 2 ? 'A' : 'B') + '" name="p' + index +
-      '" required><option value="">Pilih pemain ' + (index % 2 + 1) + '</option>' + playerOptions + '</select>';
+      '" required></select>';
     const dialog = popup('Susun laga · Lapangan ' + court, '<form id="compose" class="stack"><p class="muted">Pilihan manual tetap di slotnya. Pilih baris kosong untuk melepasnya. Klik lagi untuk melihat alternatif sebelum menyimpan.</p>' +
+      field('search', 'Cari pemain', 'type="search" placeholder="Cari nama atau panggilan" autocomplete="off"') +
       '<div class="compose-teams"><fieldset><legend>Tim A</legend>' + select(0) + select(1) + '</fieldset><fieldset><legend>Tim B</legend>' + select(2) + select(3) +
       '</fieldset></div><div class="compose-actions">' + button('Cari susunan seimbang', 'type="button" id="suggest"') +
       '<button class="button solid">Simpan laga</button></div></form>');
     const selectors = [...dialog.querySelectorAll('select')];
+    const search = dialog.querySelector('[name="search"]');
     function refreshOptions() {
-      for (const control of selectors) {
-        for (const option of control.options) {
-          option.disabled = Boolean(option.value && selectors.some(other => other !== control && other.value === option.value));
-        }
-      }
+      const values = selectors.map(control => control.value);
+      const query = search.value.trim().toLocaleLowerCase('id');
+      selectors.forEach((control, index) => {
+        const chosen = values[index];
+        const available = choices.filter(player => player.id === chosen ||
+          (!values.includes(player.id) && player.display.toLocaleLowerCase('id').includes(query)));
+        control.innerHTML = '<option value="">' + (available.length ? 'Pilih pemain ' + (index % 2 + 1) : 'Tidak ada pemain cocok') + '</option>' +
+          available.map(player => '<option value="' + esc(player.id) + '">' + esc(player.display) +
+            ' · ' + player.tier + ' · ' + (played.get(player.id) ?? 0) + 'x main</option>').join('');
+        control.value = chosen;
+      });
     }
+    search.addEventListener('input', refreshOptions);
+    refreshOptions();
     const pins = selectors.map(() => null);
     const indicator = document.createElement('small');
     indicator.setAttribute('role', 'status');
@@ -235,6 +256,9 @@ export async function host() {
         if (requested !== generation || !dialog.open) return;
         options = suggestion.alternatives;
       }
+      search.value = '';
+      for (const control of selectors) control.value = '';
+      refreshOptions();
       options[next].flat().forEach((playerId, index) => { selectors[index].value = playerId; });
       indicator.textContent = options.length === 1 ? 'Hanya satu susunan sesuai giliran, keseimbangan, dan pilihan manual.' : `Pilihan ${next + 1} dari ${options.length}`;
       next = (next + 1) % options.length;
@@ -246,19 +270,9 @@ export async function host() {
     }, dialog), dialog);
   }
 
-  async function showQR(matchId) {
-    const path = endpoint + '/qr/' + encodeURIComponent(matchId);
-    const data = await api(path);
-    popup('QR laporan skor', '<p>Pemain bisa scan setelah laga selesai. Berlaku selama sesi Selasa masih buka.</p>' +
-      '<img class="qr" src="' + esc(path) + '/image" alt="QR untuk melapor skor pertandingan" width="288" height="288">' +
-      '<div class="actions centered"><a class="button" href="' + esc(data.url) + '" target="_blank" rel="noopener noreferrer">Buka formulir</a>' +
-      button('Salin link QR', 'id="copy-qr" type="button"') + '</div>');
-    clipboard('copy-qr', data.url);
-  }
-
   function manualScore(common) {
     const match = data.sessions.find(session => session.id === common.sessionId).matches.find(item => item.id === common.matchId);
-    const value = index => 'required type="number" inputmode="numeric" min="0" max="30" value="' + (match.score?.[index] ?? '') + '"';
+    const value = index => 'required type="number" inputmode="numeric" min="0" step="1" value="' + (match.score?.[index] ?? '') + '"';
     const dialog = popup(match.score ? 'Koreksi skor resmi' : 'Isi skor resmi', teams(match) + '<form id="manual-score" class="stack">' +
       '<div class="score-fields">' + field('a', 'Skor Tim A', value(0)) + field('b', 'Skor Tim B', value(1)) +
       '</div><button class="button solid">Sahkan skor</button></form>');
@@ -322,7 +336,7 @@ export async function host() {
     root.querySelector('#reschedule-session')?.addEventListener('click', () => rescheduleDialog(session));
     root.querySelectorAll('[data-action]').forEach(control => control.addEventListener('click', () => {
       const payload = JSON.parse(control.dataset.action);
-      const questions = { closeSession: 'Tutup sesi ini? QR akan ikut ditutup.', cancelMatch: 'Batalkan pertandingan ini?' };
+      const questions = { closeSession: 'Tutup sesi ini? Antrean yang belum dimainkan akan dibatalkan.', cancelMatch: 'Batalkan pertandingan ini?' };
       if (payload.action === 'deleteScore' || payload.action === 'deleteMatch') {
         const chosen = data.sessions.find(s => s.id === payload.sessionId);
         const match = chosen?.matches.find(m => m.id === payload.matchId);
@@ -341,7 +355,6 @@ export async function host() {
     root.querySelectorAll('[data-edit]').forEach(control => control.addEventListener('click', () =>
       playerDialog(data.players.find(player => player.id === control.dataset.edit))));
     root.querySelectorAll('[data-court]').forEach(control => control.addEventListener('click', () => compose(session, Number(control.dataset.court))));
-    root.querySelectorAll('[data-qr]').forEach(control => control.addEventListener('click', () => run(control, () => showQR(control.dataset.qr))));
     root.querySelectorAll('[data-score]').forEach(control => control.addEventListener('click', () => manualScore(JSON.parse(control.dataset.score))));
   }
 
